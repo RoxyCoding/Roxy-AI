@@ -6,6 +6,9 @@ import type {
   Bootstrap,
   Conversation,
   ConversationDetail,
+  ComposerSeed,
+  Attachment,
+  ModelingBrief,
   Message,
   Project,
   ProviderId,
@@ -39,6 +42,9 @@ export interface State {
   mcpResults: (ToolCall & { conversation_id: string })[];
   draftProvider: ProviderId;
   draftModel: string;
+  draftEffort: string;
+  draftMode: Conversation["mode"];
+  composerSeed: ComposerSeed | null;
   wsConnected: boolean;
   toasts: Toast[];
 }
@@ -49,7 +55,8 @@ type Action =
   | { type: "conversations"; conversations: Conversation[] }
   | { type: "open"; id: string | null; detail: ConversationDetail | null }
   | { type: "providers"; providers: ProviderStatus[] | null; loading: boolean }
-  | { type: "draft"; provider?: ProviderId; model?: string }
+  | { type: "draft"; provider?: ProviderId; model?: string; effort?: string; mode?: Conversation["mode"] }
+  | { type: "composerSeed"; seed: ComposerSeed | null }
   | { type: "ws"; connected: boolean }
   | { type: "toast"; toast: Toast }
   | { type: "untoast"; id: number }
@@ -122,6 +129,11 @@ function onEvent(s: State, ev: ServerEvent): State {
       if (!r) return s;
       return { ...s, runs: { ...s.runs, [ev.conversation_id]: { ...r, status_text: ev.status_text } } };
     }
+    case "run.progress": {
+      const r = s.runs[ev.conversation_id];
+      if (!r) return s;
+      return { ...s, runs: { ...s.runs, [ev.conversation_id]: { ...r, progress: ev.progress } } };
+    }
     case "run.notice": {
       const r = s.runs[ev.conversation_id];
       if (!r) return s;
@@ -154,13 +166,32 @@ function reducer(s: State, a: Action): State {
         ...s,
         currentId: a.id,
         detail: a.detail,
+        draftMode: a.detail?.conversation.mode ?? "modeling",
+        composerSeed: a.detail?.conversation.draft?.text ? {
+          text: a.detail.conversation.draft.text,
+          attachments: (a.detail.conversation.draft.attachment_ids ?? []).map((id) => a.detail!.attachments[id]).filter(Boolean),
+        } : null,
         runs: a.detail?.run ? { ...s.runs, [a.detail.run.conversation_id]: a.detail.run } : s.runs,
-        ...(a.detail ? { draftProvider: a.detail.conversation.provider, draftModel: a.detail.conversation.model } : {}),
+        ...(a.detail
+          ? {
+              draftProvider: a.detail.conversation.provider,
+              draftModel: a.detail.conversation.model,
+              draftEffort: a.detail.conversation.effort ?? "",
+            }
+          : {}),
       };
     case "providers":
       return { ...s, providers: a.providers ?? s.providers, providersLoading: a.loading };
     case "draft":
-      return { ...s, draftProvider: a.provider ?? s.draftProvider, draftModel: a.model ?? s.draftModel };
+      return {
+        ...s,
+        draftProvider: a.provider ?? s.draftProvider,
+        draftModel: a.model ?? s.draftModel,
+        draftEffort: a.effort ?? s.draftEffort,
+        draftMode: a.mode ?? s.draftMode,
+      };
+    case "composerSeed":
+      return { ...s, composerSeed: a.seed };
     case "ws":
       return { ...s, wsConnected: a.connected };
     case "toast":
@@ -193,6 +224,9 @@ function initial(boot: Bootstrap): State {
     mcpResults: [],
     draftProvider: dp,
     draftModel: boot.settings.providers[dp]?.default_model ?? "",
+    draftEffort: boot.settings.providers[dp]?.default_effort ?? "",
+    draftMode: "modeling",
+    composerSeed: null,
     wsConnected: true, // the banner is for losing an established connection
     toasts: [],
   };
@@ -235,11 +269,11 @@ function useActions(state: State, dispatch: React.Dispatch<Action>) {
   );
 
   const openConversation = useCallback(
-    async (id: string | null) => {
+    async (id: string | null, mode: Conversation["mode"] = "modeling") => {
       if (!id) {
         const s = stateRef.current;
         dispatch({ type: "open", id: null, detail: null });
-        dispatch({ type: "draft", provider: s.draftProvider, model: s.draftModel });
+        dispatch({ type: "draft", provider: s.draftProvider, model: s.draftModel, effort: s.draftEffort, mode });
         return;
       }
       const detail = await guard(() => get<ConversationDetail>(`/api/conversations/${id}`));
@@ -273,11 +307,11 @@ function useActions(state: State, dispatch: React.Dispatch<Action>) {
   );
 
   const setDraft = useCallback(
-    async (provider: ProviderId, model: string) => {
-      dispatch({ type: "draft", provider, model });
+    async (provider: ProviderId, model: string, effort: string) => {
+      dispatch({ type: "draft", provider, model, effort });
       const cur = stateRef.current.detail?.conversation;
-      if (cur && (cur.provider !== provider || cur.model !== model)) {
-        await guard(() => patch(`/api/conversations/${cur.id}`, { provider, model }));
+      if (cur && (cur.provider !== provider || cur.model !== model || (cur.effort ?? "") !== effort)) {
+        await guard(() => patch(`/api/conversations/${cur.id}`, { provider, model, effort }));
       }
     },
     [dispatch, guard],
@@ -289,7 +323,13 @@ function useActions(state: State, dispatch: React.Dispatch<Action>) {
       let id = s.currentId;
       if (!id) {
         const conv = await guard(() =>
-          post<Conversation>("/api/conversations", { project_id: s.activeProjectId, provider: s.draftProvider, model: s.draftModel }),
+          post<Conversation>("/api/conversations", {
+            project_id: s.activeProjectId,
+            provider: s.draftProvider,
+            model: s.draftModel,
+            effort: s.draftEffort,
+            mode: s.draftMode,
+          }),
         );
         if (!conv) return false;
         id = conv.id;
@@ -297,7 +337,13 @@ function useActions(state: State, dispatch: React.Dispatch<Action>) {
         dispatch({ type: "open", id, detail: { conversation: conv, messages: [], attachments: {}, sessions: [], run: null } });
       }
       const res = await guard(() =>
-        post(`/api/conversations/${id}/messages`, { text, attachment_ids: attachmentIds, provider: s.draftProvider, model: s.draftModel }),
+        post(`/api/conversations/${id}/messages`, {
+          text,
+          attachment_ids: attachmentIds,
+          provider: s.draftProvider,
+          model: s.draftModel,
+          effort: s.draftEffort,
+        }),
       );
       if (res && attachmentIds.length) await openConversation(id);
       return Boolean(res);
@@ -313,6 +359,7 @@ function useActions(state: State, dispatch: React.Dispatch<Action>) {
           text,
           provider: s.draftProvider,
           model: s.draftModel,
+          effort: s.draftEffort,
         }),
       );
       if (res) await openConversation(m.conversation_id);
@@ -324,7 +371,7 @@ function useActions(state: State, dispatch: React.Dispatch<Action>) {
   const retry = useCallback(
     async (conversationId: string) => {
       const s = stateRef.current;
-      const res = await guard(() => post(`/api/conversations/${conversationId}/retry`, { provider: s.draftProvider, model: s.draftModel }));
+      const res = await guard(() => post(`/api/conversations/${conversationId}/retry`, { provider: s.draftProvider, model: s.draftModel, effort: s.draftEffort }));
       if (res) await openConversation(conversationId);
     },
     [guard, openConversation],
@@ -365,11 +412,33 @@ function useActions(state: State, dispatch: React.Dispatch<Action>) {
     [guard, toast],
   );
 
+  const usePrompt = useCallback(async (text: string) => {
+    const source = stateRef.current.currentId;
+    if (!source) return;
+    const result = await guard(() => post<{ conversation: Conversation; attachments: Attachment[] }>(`/api/conversations/${source}/handoff`, { text }));
+    if (!result) return;
+    dispatch({ type: "event", ev: { type: "conversation.updated", conversation: result.conversation } });
+    dispatch({ type: "open", id: result.conversation.id, detail: {
+      conversation: result.conversation, messages: [], attachments: Object.fromEntries(result.attachments.map((a) => [a.id, a])), sessions: [], run: null,
+    } });
+    dispatch({ type: "composerSeed", seed: { text, attachments: result.attachments } });
+  }, [guard, dispatch]);
+
+  const saveBrief = useCallback(async (brief: ModelingBrief) => {
+    const id = stateRef.current.currentId;
+    if (!id) return false;
+    const conv = await guard(() => patch<Conversation>(`/api/conversations/${id}`, { brief }));
+    if (conv) dispatch({ type: "event", ev: { type: "conversation.updated", conversation: conv } });
+    return Boolean(conv);
+  }, [guard, dispatch]);
+
   return {
     toast,
     guard,
     loadConversations,
     openConversation,
+    usePrompt,
+    saveBrief,
     refreshProviders,
     refreshProjects,
     activateProject,

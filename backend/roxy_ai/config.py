@@ -104,6 +104,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "enabled": True,
             "cli_path": "",  # empty: `claude` on PATH, else the SDK's bundled CLI
             "default_model": "default",
+            "default_effort": "",  # empty: the model's own default
             "auth_mode": "cli",  # cli: the CLI's own login (subscription or env) | api_key
             "permission_mode": "default",
         },
@@ -111,6 +112,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "enabled": True,
             "cli_path": "",  # empty: `codex` on PATH
             "default_model": "",
+            "default_effort": "",
             "sandbox": "workspace-write",
             "approval_policy": "on-request",
         },
@@ -129,6 +131,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         # Tools the MCP marks readOnlyHint never change the scene.
         "auto_approve_readonly_mcp": True,
         "auto_approve_blender_mcp": False,
+        # Full access: the AIs run without approvals or sandbox (Claude bypassPermissions,
+        # Codex approval "never" + danger-full-access). Off unless the user turns it on.
+        "full_access": False,
     },
     "context": {"handoff_max_chars": 40000},
     "ui": {"right_panel_open": True, "sidebar_open": True},

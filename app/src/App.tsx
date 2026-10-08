@@ -11,6 +11,7 @@ import { SettingsDialog, type SettingsTab } from "./components/SettingsDialog";
 import { Toasts } from "./components/Toasts";
 import { Lightbox, LightboxProvider } from "./components/Lightbox";
 import { cx } from "./lib/format";
+import { useSlide } from "./components/useSlide";
 
 function useTheme(theme: string) {
   useEffect(() => {
@@ -25,6 +26,9 @@ function Shell() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(state.settings.ui.sidebar_open);
   const [panelOpen, setPanelOpen] = useState(state.settings.ui.right_panel_open);
+  const sidebar = useSlide(sidebarOpen ? true : null);
+  const panel = useSlide(panelOpen ? true : null);
+  const settings = useSlide(settingsTab);
   useTheme(state.settings.theme);
 
   const togglePanel = () => {
@@ -40,8 +44,8 @@ function Shell() {
 
   return (
     <LightboxProvider>
-      <div className={cx("shell", sidebarOpen && "with-sidebar", panelOpen && "with-panel")}>
-        {sidebarOpen && <Sidebar onSettings={(tab) => setSettingsTab(tab ?? "general")} onClose={toggleSidebar} />}
+      <div className={cx("shell", sidebar.value && "with-sidebar", panel.value && "with-panel")}>
+        {sidebar.value && <Sidebar exiting={sidebar.exiting} onSettings={(tab) => setSettingsTab(tab ?? "general")} onClose={toggleSidebar} />}
         <main className="main">
           <TopBar
             sidebarOpen={sidebarOpen}
@@ -52,12 +56,12 @@ function Shell() {
           />
           <ChatView onSettings={(tab) => setSettingsTab(tab)} />
         </main>
-        {panelOpen && <RightPanel onClose={togglePanel} onSettings={(tab) => setSettingsTab(tab)} />}
-        {sidebarOpen && <div className="scrim mobile-only" onClick={toggleSidebar} />}
+        {panel.value && <RightPanel exiting={panel.exiting} onClose={togglePanel} onSettings={(tab) => setSettingsTab(tab)} />}
+        {sidebar.value && <div className={cx("scrim mobile-only", sidebar.exiting && "slide-out")} inert={sidebar.exiting} onClick={toggleSidebar} />}
       </div>
       {!state.wsConnected && <div className="offline-banner">バックエンドと再接続しています…</div>}
       <ApprovalDialog />
-      {settingsTab && <SettingsDialog initialTab={settingsTab} onClose={() => setSettingsTab(null)} />}
+      {settings.value && <SettingsDialog exiting={settings.exiting} initialTab={settings.value} onClose={() => setSettingsTab(null)} />}
       <Toasts />
       <Lightbox />
     </LightboxProvider>

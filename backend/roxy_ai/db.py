@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS conversations (
     title TEXT NOT NULL DEFAULT '',
     provider TEXT NOT NULL,
     model TEXT NOT NULL DEFAULT '',
+    effort TEXT NOT NULL DEFAULT '',
+    mode TEXT NOT NULL DEFAULT 'modeling',
+    brief TEXT NOT NULL DEFAULT '{}',
+    draft TEXT NOT NULL DEFAULT '{}',
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
 );
@@ -83,7 +87,7 @@ CREATE TABLE IF NOT EXISTS attachments (
 );
 """
 
-JSON_FIELDS = ("tool_calls", "attachments", "meta")
+JSON_FIELDS = ("tool_calls", "attachments", "meta", "brief", "draft")
 
 
 def new_id() -> str:
@@ -112,6 +116,19 @@ class Database:
         self._lock = threading.RLock()
         with self._lock:
             self._conn.executescript(SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was created."""
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(conversations)")}
+        if "effort" not in cols:
+            self._conn.execute("ALTER TABLE conversations ADD COLUMN effort TEXT NOT NULL DEFAULT ''")
+        if "mode" not in cols:
+            self._conn.execute("ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'modeling'")
+        if "brief" not in cols:
+            self._conn.execute("ALTER TABLE conversations ADD COLUMN brief TEXT NOT NULL DEFAULT '{}'")
+        if "draft" not in cols:
+            self._conn.execute("ALTER TABLE conversations ADD COLUMN draft TEXT NOT NULL DEFAULT '{}'")
 
     def close(self) -> None:
         with self._lock:
@@ -176,13 +193,14 @@ class Database:
 
     # Conversations ---------------------------------------------------------
 
-    def create_conversation(self, project_id: str, provider: str, model: str = "", title: str = "") -> dict:
+    def create_conversation(self, project_id: str, provider: str, model: str = "", title: str = "",
+                            effort: str = "", mode: str = "modeling") -> dict:
         now = time.time()
         cid = new_id()
         self._exec(
-            "INSERT INTO conversations (id, project_id, title, provider, model, created_at, updated_at)"
-            " VALUES (?,?,?,?,?,?,?)",
-            (cid, project_id, title, provider, model, now, now),
+            "INSERT INTO conversations (id, project_id, title, provider, model, effort, mode, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            (cid, project_id, title, provider, model, effort, mode, now, now),
         )
         return self.get_conversation(cid)
 
@@ -197,8 +215,8 @@ class Database:
         return self._all("SELECT * FROM conversations ORDER BY updated_at DESC")
 
     def update_conversation(self, cid: str, fields: dict) -> dict | None:
-        allowed = {"title", "provider", "model", "project_id"}
-        sets = {k: v for k, v in fields.items() if k in allowed}
+        allowed = {"title", "provider", "model", "effort", "project_id", "brief", "draft"}
+        sets = {k: json.dumps(v, ensure_ascii=False) if k in {"brief", "draft"} else v for k, v in fields.items() if k in allowed}
         if sets:
             cols = ", ".join(f"{k}=:{k}" for k in sets)
             self._exec(f"UPDATE conversations SET {cols}, updated_at=:now WHERE id=:id", {**sets, "now": time.time(), "id": cid})

@@ -97,6 +97,8 @@ class AppServer:
                 await asyncio.wait_for(self._proc.wait(), 5)
             except Exception:
                 self._proc.kill()
+                await self._proc.wait()
+        self._proc = None
         if self._reader:
             self._reader.cancel()
         self._fail_pending("app-server stopped")
@@ -230,6 +232,7 @@ class CodexAdapter(AIAdapter):
         self._server_lock = asyncio.Lock()
         self._turns: dict[str, _Turn] = {}  # thread id -> active turn
         self._conv_thread: dict[str, str] = {}  # conversation id -> thread id
+        self._full_access_threads: set[str] = set()
         self._status: ProviderStatus | None = None
         self._status_at = 0.0
         self._models: list[dict] = []
@@ -282,6 +285,8 @@ class CodexAdapter(AIAdapter):
                     description=m.get("description", ""),
                     is_default=bool(m.get("isDefault")),
                     supports_images="image" in (m.get("inputModalities") or ["text", "image"]),
+                    efforts=[o["reasoningEffort"] for o in m.get("supportedReasoningEfforts") or [] if o.get("reasoningEffort")],
+                    default_effort=m.get("defaultReasoningEffort") or "",
                 )
                 for m in self._models
             ]
@@ -411,6 +416,8 @@ class CodexAdapter(AIAdapter):
             await turn.emit(ToolStart(item["id"], "file_change", {"changes": item.get("changes")}))
         elif t == "webSearch":
             await turn.emit(ToolStart(item["id"], "web_search", {"query": item.get("query")}))
+        elif t == "imageGeneration":
+            await turn.emit(ToolStart(item["id"], "image_generation", {"prompt": item.get("revisedPrompt")}))
         elif t == "reasoning":
             await turn.emit(StatusUpdate("考え中…"))
 
@@ -435,6 +442,16 @@ class CodexAdapter(AIAdapter):
                                     output="\n".join(c.get("path", "") for c in item.get("changes") or [])))
         elif t == "webSearch":
             await turn.emit(ToolEnd(item["id"], ok=True, output=item.get("query", "")))
+        elif t == "imageGeneration":
+            images = []
+            error = ""
+            if item.get("result"):
+                try:
+                    images.append(("image/png", base64.b64decode(item["result"], validate=True)))
+                except ValueError:
+                    error = "生成画像を読み込めませんでした"
+            ok = item.get("status") == "completed" and bool(images) and not item.get("failure") and not error
+            await turn.emit(ToolEnd(item["id"], ok=ok, output=error or ("" if ok else "画像生成に失敗しました"), images=images))
 
     async def _on_request(self, method: str, params: dict) -> Any:
         turn = self._turns.get(params.get("threadId", ""))
@@ -511,22 +528,41 @@ class CodexAdapter(AIAdapter):
 
     # Running ---------------------------------------------------------------
 
+    def _turn_access(self, req: RunRequest, thread_id: str) -> dict:
+        """Per-turn approval/sandbox, so toggling full access also applies to an open thread."""
+        if req.full_access:
+            self._full_access_threads.add(thread_id)
+            return {"approvalPolicy": "never", "sandboxPolicy": {"type": "dangerFullAccess"}}
+        if thread_id in self._full_access_threads:
+            # Turned off again: restore the normal policy on this thread.
+            self._full_access_threads.discard(thread_id)
+            conf = self._conf()
+            sandbox = "read-only" if req.prompt_only else (conf.get("sandbox") or "workspace-write")
+            return {
+                "approvalPolicy": conf.get("approval_policy") or "on-request",
+                "sandboxPolicy": {"type": "readOnly" if sandbox == "read-only" else "workspaceWrite"},
+            }
+        return {}
+
     def _thread_params(self, req: RunRequest) -> dict:
         conf = self._conf()
         params: dict[str, Any] = {
             "cwd": req.cwd,
-            "approvalPolicy": conf.get("approval_policy") or "on-request",
-            "sandbox": conf.get("sandbox") or "workspace-write",
+            "approvalPolicy": "never" if req.full_access else (conf.get("approval_policy") or "on-request"),
+            "sandbox": "danger-full-access" if req.full_access else (conf.get("sandbox") or "workspace-write"),
+            "config": {"features": {"default_mode_request_user_input": True}},
         }
         if req.model:
             params["model"] = req.model
         if req.system_append:
             params["developerInstructions"] = req.system_append
-        if req.mcp_servers:
-            params["config"] = {
-                "mcp_servers": {
-                    name: {**cfg, "tool_timeout_sec": 600} for name, cfg in req.mcp_servers.items()
-                }
+        if req.prompt_only:
+            params["sandbox"] = "read-only"
+            params["config"]["features"].update(plugins=False, shell_tool=False)
+            params["config"]["web_search"] = "disabled"
+        elif req.mcp_servers:
+            params["config"]["mcp_servers"] = {
+                name: {**cfg, "tool_timeout_sec": 600} for name, cfg in req.mcp_servers.items()
             }
         return params
 
@@ -561,6 +597,9 @@ class CodexAdapter(AIAdapter):
             params: dict[str, Any] = {"threadId": thread_id, "input": inputs}
             if req.model:
                 params["model"] = req.model
+            if req.effort:
+                params["effort"] = req.effort
+            params.update(self._turn_access(req, thread_id))
             res = await server.request("turn/start", params, timeout=180)
             turn.turn_id = ((res or {}).get("turn") or {}).get("id", "")
             await turn.done.wait()
@@ -599,5 +638,8 @@ class CodexAdapter(AIAdapter):
             self._server.loaded_threads.discard(thread_id)
 
     async def shutdown(self) -> None:
-        if self._server:
-            await self._server.stop()
+        async with self._server_lock:
+            if self._server:
+                await self._server.stop()
+                self._server = None
+            self._status = None

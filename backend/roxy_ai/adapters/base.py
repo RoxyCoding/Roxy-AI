@@ -108,10 +108,13 @@ class RunRequest:
     parts: list[InputPart]
     cwd: str
     model: str = ""
+    effort: str = ""  # thinking/reasoning level; empty = model default
     session_id: str | None = None  # resume this AI-internal session/thread
     system_append: str = ""
     mcp_servers: dict[str, dict] = field(default_factory=dict)  # name -> {command, args, env}
     extra_dirs: list[str] = field(default_factory=list)
+    prompt_only: bool = False
+    full_access: bool = False  # no approvals, no sandbox (user opted in)
 
 
 @dataclass
@@ -138,6 +141,8 @@ class ModelInfo:
     description: str = ""
     is_default: bool = False
     supports_images: bool = True
+    efforts: list[str] = field(default_factory=list)  # selectable thinking levels, empty = not selectable
+    default_effort: str = ""
 
 
 @dataclass

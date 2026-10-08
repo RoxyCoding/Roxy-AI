@@ -14,7 +14,7 @@ const KIND_LABEL: Record<Approval["kind"], string> = {
   question: "AIからの質問",
 };
 
-function Questions({ a, onDone }: { a: Approval; onDone: (answers: Record<string, string[]> | null) => void }) {
+function Questions({ a, sending, onDone }: { a: Approval; sending: boolean; onDone: (answers: Record<string, string[]> | null) => void }) {
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const [other, setOther] = useState<Record<string, string>>({});
   const toggle = (qid: string, label: string, multi: boolean) =>
@@ -31,6 +31,7 @@ function Questions({ a, onDone }: { a: Approval; onDone: (answers: Record<string
         return [q.id, picked];
       }),
     );
+  const ready = a.questions.length > 0 && Object.values(final()).every((picked) => picked.length > 0);
   return (
     <>
       {a.questions.map((q) => (
@@ -61,8 +62,8 @@ function Questions({ a, onDone }: { a: Approval; onDone: (answers: Record<string
         </fieldset>
       ))}
       <div className="dialog-actions">
-        <button className="btn" onClick={() => onDone(null)}>回答しない</button>
-        <button className="btn primary" onClick={() => onDone(final())}>回答を送信</button>
+        <button className="btn" disabled={sending} onClick={() => onDone(null)}>回答しない</button>
+        <button className="btn primary" disabled={sending || !ready} onClick={() => onDone(final())}>回答を送信</button>
       </div>
     </>
   );
@@ -118,8 +119,10 @@ export function ApprovalDialog() {
   const hasForm = a.kind === "mcp_elicitation" && a.schema?.properties && Object.keys(a.schema.properties).length > 0;
 
   const respond = async (body: { allow: boolean; remember?: boolean; cancel_turn?: boolean; answers?: Record<string, string[]>; content?: Record<string, unknown>; message?: string }) => {
+    if (sending) return;
     setSending(true);
-    await actions.guard(() => post(`/api/approvals/${a.id}`, body));
+    const result = await actions.guard(() => post(`/api/approvals/${a.id}`, body));
+    if (!result) setSending(false);
   };
 
   const input = pretty(a.input);
@@ -142,7 +145,7 @@ export function ApprovalDialog() {
         )}
         {a.detail && <p className="detail">{a.detail}</p>}
         {a.kind === "question" ? (
-          <Questions a={a} onDone={(answers) => void respond(answers ? { allow: true, answers } : { allow: false })} />
+          <Questions key={a.id} a={a} sending={sending} onDone={(answers) => void respond(answers ? { allow: true, answers } : { allow: false })} />
         ) : (
           <>
             {hasForm ? (

@@ -5,10 +5,12 @@ import type { Conversation, SearchHit } from "../lib/types";
 import { cx, relativeTime } from "../lib/format";
 import { Icon } from "./Icons";
 import type { SettingsTab } from "./SettingsDialog";
+import { useSlide } from "./useSlide";
 
 function ConversationRow({ c, active }: { c: Conversation; active: boolean }) {
   const { state, actions } = useStore();
   const [menu, setMenu] = useState(false);
+  const slidingMenu = useSlide(menu ? true : null);
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(c.title);
   const running = Boolean(state.runs[c.id]);
@@ -46,15 +48,15 @@ function ConversationRow({ c, active }: { c: Conversation; active: boolean }) {
         <span className="ellipsis">{c.title || "新しいチャット"}</span>
       </div>
       <div className="conv-meta">
-        <span className="chip">{c.provider === "codex" ? "Codex" : "Claude"}</span>
+        {c.mode === "prompt" && <span>プロンプト</span>}
         <span>{relativeTime(c.updated_at)}</span>
       </div>
       <div className="conv-actions" ref={menuRef} onClick={(e) => e.stopPropagation()}>
         <button className="icon-btn sm" title="メニュー" onClick={() => setMenu((v) => !v)}>
           <Icon name="more" />
         </button>
-        {menu && (
-          <div className="menu">
+        {slidingMenu.value && (
+          <div className={cx("menu", slidingMenu.exiting && "slide-out")} inert={slidingMenu.exiting}>
             <button onClick={() => { setMenu(false); setTitle(c.title); setRenaming(true); }}>
               <Icon name="edit" /> 名前を変更
             </button>
@@ -81,7 +83,7 @@ function ConversationRow({ c, active }: { c: Conversation; active: boolean }) {
   );
 }
 
-export function Sidebar({ onSettings, onClose }: { onSettings: (tab?: SettingsTab) => void; onClose: () => void }) {
+export function Sidebar({ onSettings, onClose, exiting = false }: { onSettings: (tab?: SettingsTab) => void; onClose: () => void; exiting?: boolean }) {
   const { state, actions } = useStore();
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
@@ -107,11 +109,10 @@ export function Sidebar({ onSettings, onClose }: { onSettings: (tab?: SettingsTa
   };
 
   return (
-    <aside className="sidebar">
+    <aside className={cx("sidebar", exiting && "slide-out")} inert={exiting}>
       <div className="sidebar-head">
         <div className="brand">
           <img className="brand-logo" src="/roxy-logo.png" alt="Roxy" />
-          <span className="brand-sub">Blender AI</span>
         </div>
         <button className="icon-btn" title="サイドバーを閉じる" onClick={onClose}>
           <Icon name="sidebar" />
@@ -120,6 +121,9 @@ export function Sidebar({ onSettings, onClose }: { onSettings: (tab?: SettingsTa
 
       <button className="nav-item strong" onClick={() => void actions.openConversation(null)}>
         <Icon name="plus" /> 新規チャット
+      </button>
+      <button className="nav-item" onClick={() => void actions.openConversation(null, "prompt")}>
+        <Icon name="edit" /> モデリングプロンプト
       </button>
 
       <label className="search">

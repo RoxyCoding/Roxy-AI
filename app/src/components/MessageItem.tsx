@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { fileUrl } from "../lib/backend";
-import { providerName, useStore } from "../lib/store";
+import { useStore } from "../lib/store";
 import type { Attachment, Message, RunSnapshot } from "../lib/types";
-import { clockTime, cx, fileSize, seconds } from "../lib/format";
+import { clockTime, fileSize, seconds, visibleAssistantText } from "../lib/format";
 import { Icon } from "./Icons";
 import { Markdown } from "./Markdown";
 import { ToolCalls } from "./ToolCalls";
@@ -98,16 +98,15 @@ export function MessageItem({ m, run, isLast, attachments }: {
   }
 
   const live = m.status === "streaming" && run && run.assistant_message_id === m.id ? run : null;
-  const text = live ? live.text : m.content;
+  const text = visibleAssistantText(live ? live.text : m.content);
   const tools = live ? live.tool_calls : m.tool_calls;
   const notices = live ? live.notices : m.meta?.notices ?? [];
-  const label = `${providerName(state, m.provider)}${m.model ? ` ・ ${m.model}` : ""}`;
 
   return (
     <div className="msg assistant">
       <div className="msg-head">
-        <span className={cx("avatar", m.provider)}>{m.provider === "codex" ? "C" : "A"}</span>
-        <span className="msg-who">{label}</span>
+        <img className="avatar" src="/roxy-icon.png" alt="Roxy" />
+        <span className="msg-who">Roxy</span>
         <span className="muted small">{clockTime(m.created_at)}</span>
       </div>
       {notices.length > 0 && (

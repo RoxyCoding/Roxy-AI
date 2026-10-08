@@ -23,7 +23,7 @@ import uvicorn
 from .api import create_app
 from .config import Paths, data_dir
 from .logs import setup_logging
-from .procs import install_kill_on_close_job, watch_parent
+from .procs import ensure_hidden_console, install_kill_on_close_job, watch_parent
 
 
 def main() -> None:
@@ -39,6 +39,8 @@ def main() -> None:
     log = logging.getLogger("roxy_ai")
     if install_kill_on_close_job():
         log.info("Child processes are bound to this process (job object)")
+    if ensure_hidden_console():
+        log.info("Attached a hidden console so child processes open no terminal windows")
 
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())

@@ -1,10 +1,11 @@
-import { forwardRef, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { del, fileUrl, upload } from "../lib/backend";
 import { useStore } from "../lib/store";
 import type { Attachment } from "../lib/types";
 import { cx, fileSize } from "../lib/format";
 import { Icon } from "./Icons";
 import { useLightbox } from "./Lightbox";
+import { ComposerControls } from "./ComposerControls";
 
 interface Pending {
   key: string;
@@ -23,7 +24,7 @@ let keySeq = 0;
 const MAX_FILES = 10;
 
 export const Composer = forwardRef<ComposerHandle>(function Composer(_, ref) {
-  const { state, actions } = useStore();
+  const { state, actions, dispatch } = useStore();
   const [text, setText] = useState("");
   const [items, setItems] = useState<Pending[]>([]);
   const [sending, setSending] = useState(false);
@@ -31,6 +32,21 @@ export const Composer = forwardRef<ComposerHandle>(function Composer(_, ref) {
   const replaceTarget = useRef<string | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const lightbox = useLightbox();
+  useEffect(() => {
+    if (state.composerSeed === null) return;
+    setText(state.composerSeed.text);
+    setItems(state.composerSeed.attachments.map((att) => ({
+      key: `p${keySeq++}`, name: att.name, size: att.size, isImage: att.mime.startsWith("image/"), att,
+    })));
+    dispatch({ type: "composerSeed", seed: null });
+    textarea.current?.focus();
+  }, [state.composerSeed, dispatch]);
+  useEffect(() => {
+    const input = textarea.current;
+    if (!input) return;
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 260)}px`;
+  }, [text]);
 
   const cid = state.currentId;
   const running = cid ? Boolean(state.runs[cid]) : false;
@@ -127,12 +143,8 @@ export const Composer = forwardRef<ComposerHandle>(function Composer(_, ref) {
           ref={textarea}
           value={text}
           rows={1}
-          placeholder="Blenderで作りたいものや、やりたいことを入力…（Shift+Enterで改行）"
-          onChange={(e) => {
-            setText(e.target.value);
-            e.target.style.height = "auto";
-            e.target.style.height = `${Math.min(e.target.scrollHeight, 260)}px`;
-          }}
+          placeholder={state.draftMode === "prompt" ? "作りたいものや用途、好みを相談…（参考画像も添付できます）" : "Blenderで作りたいものや、やりたいことを入力…（Shift+Enterで改行）"}
+          onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             // Never send while a Japanese IME is composing.
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
@@ -182,6 +194,7 @@ export const Composer = forwardRef<ComposerHandle>(function Composer(_, ref) {
           )}
         </div>
       </div>
+      <ComposerControls />
     </div>
   );
 });

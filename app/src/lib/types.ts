@@ -2,6 +2,18 @@
 
 export type ProviderId = "claude" | "codex" | string;
 
+export type ModelingBrief = Partial<Record<"target" | "use" | "shape" | "dimensions" | "materials" | "colors", string>>;
+export type ModelingStage = "shape" | "details" | "materials" | "finish";
+export interface ModelingProgress {
+  stage: ModelingStage | "done";
+  completed: ModelingStage[];
+  detail: string;
+}
+export interface ComposerSeed {
+  text: string;
+  attachments: Attachment[];
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -21,6 +33,10 @@ export interface Conversation {
   title: string;
   provider: ProviderId;
   model: string;
+  effort: string; // thinking level, "" = model default
+  mode: "modeling" | "prompt";
+  brief: ModelingBrief;
+  draft?: { text?: string; attachment_ids?: string[] };
   created_at: number;
   updated_at: number;
 }
@@ -50,7 +66,7 @@ export interface Message {
   error: string;
   tool_calls: ToolCall[];
   attachments: string[];
-  meta: { notices?: string[]; usage?: Record<string, unknown>; duration?: number; resolved_model?: string };
+  meta: { notices?: string[]; usage?: Record<string, unknown>; duration?: number; resolved_model?: string; effort?: string; progress?: ModelingProgress | null };
   created_at: number;
 }
 
@@ -91,6 +107,8 @@ export interface RunSnapshot {
   conversation_id: string;
   provider: ProviderId;
   model: string;
+  effort?: string;
+  progress?: ModelingProgress | null;
   assistant_message_id: string;
   text: string;
   status_text: string;
@@ -107,6 +125,8 @@ export interface ModelInfo {
   description: string;
   is_default: boolean;
   supports_images: boolean;
+  efforts: string[]; // selectable thinking levels; empty = not selectable
+  default_effort: string;
 }
 
 export interface ProviderStatus {
@@ -168,9 +188,9 @@ export interface Settings {
   theme: "system" | "light" | "dark";
   default_provider: ProviderId;
   providers: {
-    claude: { enabled: boolean; cli_path: string; default_model: string; auth_mode: "cli" | "api_key"; permission_mode: string };
-    codex: { enabled: boolean; cli_path: string; default_model: string; sandbox: string; approval_policy: string };
-    [k: string]: Record<string, unknown> & { enabled: boolean; default_model: string };
+    claude: { enabled: boolean; cli_path: string; default_model: string; default_effort: string; auth_mode: "cli" | "api_key"; permission_mode: string };
+    codex: { enabled: boolean; cli_path: string; default_model: string; default_effort: string; sandbox: string; approval_policy: string };
+    [k: string]: Record<string, unknown> & { enabled: boolean; default_model: string; default_effort: string };
   };
   mcp: {
     server_dir: string;
@@ -182,7 +202,7 @@ export interface Settings {
     preview_max_size: number;
     monitor_enabled: boolean;
   };
-  approval: { auto_approve_readonly_mcp: boolean; auto_approve_blender_mcp: boolean };
+  approval: { auto_approve_readonly_mcp: boolean; auto_approve_blender_mcp: boolean; full_access: boolean };
   context: { handoff_max_chars: number };
   ui: { right_panel_open: boolean; sidebar_open: boolean };
   last_project_id: string | null;
@@ -230,6 +250,7 @@ export type ServerEvent =
   | { type: "run.delta"; conversation_id: string; message_id: string; text: string }
   | { type: "run.tool"; conversation_id: string; tool_call: ToolCall; status_text: string }
   | { type: "run.status"; conversation_id: string; status_text: string }
+  | { type: "run.progress"; conversation_id: string; progress: ModelingProgress }
   | { type: "run.notice"; conversation_id: string; text: string }
   | { type: "run.finished"; conversation_id: string; run_id: string; status: string; error: string }
   | { type: "approval.request"; approval: Approval }

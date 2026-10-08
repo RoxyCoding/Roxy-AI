@@ -87,6 +87,42 @@ def install_kill_on_close_job() -> bool:
         return False
 
 
+def ensure_hidden_console() -> bool:
+    """Give this process a console without a window, for its children to inherit.
+
+    Console programs started by a process that has no console (a windowed or
+    pythonw launch) each open a new terminal window, and several of ours are
+    started by libraries we don't control (the Claude Agent SDK, MCP servers
+    started by the AI CLIs). Attaching to a hidden console once covers them all.
+    Returns True if a console had to be created.
+    """
+    if os.name != "nt":
+        return False
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    buf = (ctypes.c_uint32 * 4)()
+    if kernel32.GetConsoleProcessList(buf, 4):
+        return False  # already attached to a console (hidden or not)
+    # Start a tiny console process with no window and share its console.
+    holder = subprocess.Popen(
+        ["cmd.exe", "/d", "/q", "/k"],
+        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    attached = False
+    for _ in range(50):  # the console exists once cmd.exe has started
+        if kernel32.AttachConsole(holder.pid):
+            attached = True
+            break
+        time.sleep(0.02)
+    # Once attached, the console stays alive with us; the holder is no longer needed.
+    holder.kill()
+    if not attached:
+        logger.warning("Could not attach a hidden console (error %s)", ctypes.get_last_error())
+    return attached
+
+
 def watch_parent(parent_pid: int, on_exit) -> None:
     """Call on_exit() once the desktop shell process is gone."""
 

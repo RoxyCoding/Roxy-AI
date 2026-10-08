@@ -4,6 +4,7 @@ import type { ToolCall } from "../lib/types";
 import { cx, pretty, seconds } from "../lib/format";
 import { Icon } from "./Icons";
 import { useLightbox } from "./Lightbox";
+import { useSlide } from "./useSlide";
 
 const STATUS: Record<ToolCall["status"], string> = {
   running: "実行中",
@@ -15,6 +16,7 @@ const STATUS: Record<ToolCall["status"], string> = {
 
 export function ToolCallRow({ tc, defaultOpen = false }: { tc: ToolCall; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
+  const body = useSlide(open ? true : null);
   const lightbox = useLightbox();
   const input = pretty(tc.input);
   return (
@@ -32,8 +34,8 @@ export function ToolCallRow({ tc, defaultOpen = false }: { tc: ToolCall; default
         </span>
         <Icon name={open ? "down" : "chevron"} size={12} />
       </button>
-      {open && (
-        <div className="tool-body">
+      {body.value && (
+        <div className={cx("tool-body", body.exiting && "slide-out")} inert={body.exiting}>
           {input && input !== "{}" && (
             <>
               <div className="tool-label">入力</div>
@@ -46,13 +48,15 @@ export function ToolCallRow({ tc, defaultOpen = false }: { tc: ToolCall; default
               <pre className="tool-pre">{tc.output}</pre>
             </>
           )}
-          {tc.images.length > 0 && (
-            <div className="thumbs">
-              {tc.images.map((id) => (
-                <img key={id} src={fileUrl(id, true)} alt="" onClick={() => lightbox({ src: fileUrl(id), name: tc.name })} />
-              ))}
-            </div>
-          )}
+        </div>
+      )}
+      {tc.images.length > 0 && (
+        <div className="thumbs tool-images">
+          {tc.images.map((id) => (
+            <button key={id} className="icon-btn" title="画像を拡大" onClick={() => lightbox({ src: fileUrl(id), name: tc.name })}>
+              <img src={fileUrl(id, true)} alt="画像プレビュー" />
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -62,7 +66,7 @@ export function ToolCallRow({ tc, defaultOpen = false }: { tc: ToolCall; default
 export function ToolCalls({ calls }: { calls: ToolCall[] }) {
   const [expanded, setExpanded] = useState(false);
   if (!calls.length) return null;
-  const visible = expanded || calls.length <= 4 ? calls : calls.slice(-3);
+  const visible = expanded || calls.length <= 4 ? calls : calls.filter((tc, i) => i >= calls.length - 3 || tc.images.length > 0);
   return (
     <div className="tools">
       {calls.length > 4 && (

@@ -152,21 +152,26 @@ class ClaudeCodeAdapter(AIAdapter):
             cwd=req.cwd,
             model=model,
             resume=req.session_id or None,
+            effort=req.effort or None,
             include_partial_messages=True,
             mcp_servers={name: {"type": "stdio", **cfg} for name, cfg in req.mcp_servers.items()},
-            permission_mode=conf.get("permission_mode") or "default",
+            permission_mode="bypassPermissions" if req.full_access else (conf.get("permission_mode") or "default"),
             can_use_tool=can_use_tool,
             add_dirs=list(req.extra_dirs),
         )
         if req.system_append:
             opts["system_prompt"] = {"type": "preset", "preset": "claude_code", "append": req.system_append}
+        if req.prompt_only:
+            opts["tools"] = ["AskUserQuestion"]
+            opts["permission_mode"] = "plan"
         return ClaudeAgentOptions(**opts)
 
     def _live_key(self, req: RunRequest) -> str:
         conf = self._conf()
         return json.dumps(
-            [req.cwd, req.mcp_servers, req.extra_dirs, self._cli_path(), conf.get("auth_mode"),
-             conf.get("permission_mode"), req.system_append],
+            # The effort is a CLI flag: changing it restarts the CLI, resuming the same session.
+            [req.cwd, req.mcp_servers, req.extra_dirs, req.effort, req.prompt_only, self._cli_path(), conf.get("auth_mode"),
+             conf.get("permission_mode"), req.full_access, req.system_append],
             sort_keys=True,
         )
 
@@ -201,6 +206,7 @@ class ClaudeCodeAdapter(AIAdapter):
                         name=m.get("displayName") or m.get("value", ""),
                         description=m.get("description", ""),
                         is_default=m.get("value") == "default",
+                        efforts=list(m.get("supportedEffortLevels") or []) if m.get("supportsEffort") else [],
                     )
                 )
             account = info.get("account") or {}

@@ -2,8 +2,9 @@ import { useEffect, useState, type ReactNode } from "react";
 import { del, get, patch, post } from "../lib/backend";
 import { useStore } from "../lib/store";
 import type { Project, ProviderStatus } from "../lib/types";
-import { cx } from "../lib/format";
+import { cx, effortLabel, findModel } from "../lib/format";
 import { Icon } from "./Icons";
+import { McpRestartButton } from "./McpRestartButton";
 
 export type SettingsTab = "general" | "ai" | "mcp" | "projects" | "logs";
 
@@ -25,13 +26,37 @@ function Field({ label, hint, children }: { label: string; hint?: ReactNode; chi
   );
 }
 
-function TextSetting({ value, onSave, placeholder, type = "text" }: { value: string | number; onSave: (v: string) => void; placeholder?: string; type?: string }) {
+type BrowseKind = "file" | "folder" | "blend";
+
+function BrowseButton({ kind, value, onSelect }: { kind: BrowseKind; value: string; onSelect: (path: string) => void }) {
+  const { actions } = useStore();
+  const [busy, setBusy] = useState(false);
+  return (
+    <button type="button" className="btn" disabled={busy} onClick={async () => {
+      setBusy(true);
+      try {
+        const result = await actions.guard(() => post<{ path: string | null }>("/api/system/browse", { kind, path: value }));
+        if (result?.path) onSelect(result.path);
+      } finally {
+        setBusy(false);
+      }
+    }}>
+      {busy ? <span className="spinner" /> : <Icon name="folder" size={13} />} 参照
+    </button>
+  );
+}
+
+function TextSetting({ value, onSave, placeholder, type = "text", browse }: { value: string | number; onSave: (v: string) => void; placeholder?: string; type?: string; browse?: BrowseKind }) {
   const [v, setV] = useState(String(value ?? ""));
   useEffect(() => setV(String(value ?? "")), [value]);
-  return (
-    <input className="input" type={type} value={v} placeholder={placeholder} onChange={(e) => setV(e.target.value)}
-           onBlur={() => v !== String(value ?? "") && onSave(v)} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} />
-  );
+  const input = <input className={cx("input", browse && "grow")} type={type} value={v} placeholder={placeholder} onChange={(e) => setV(e.target.value)}
+                       onBlur={() => v !== String(value ?? "") && onSave(v)} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} />;
+  return browse ? (
+    <div className="row gap-sm">
+      {input}
+      <BrowseButton kind={browse} value={v} onSelect={(path) => { setV(path); onSave(path); }} />
+    </div>
+  ) : input;
 }
 
 function Toggle({ checked, onChange, label, hint }: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string }) {
@@ -121,7 +146,7 @@ function ProviderCard({ p }: { p: ProviderStatus }) {
           ) : (
             <p className="muted small">ログインはターミナルで <code>claude</code> を起動し <code>/login</code> を実行してください（ご自身のアカウントで認証されます）。</p>
           )}
-          <Field label="権限モード" hint="ツール実行の承認方法。承認を省略するモードはここでは選べません。">
+          <Field label="権限モード" hint="ツール実行の承認方法。すべて確認なしで実行する場合は、上の「フルアクセスモード」を使います。">
             <select className="select" value={String(conf.permission_mode ?? "default")} onChange={(e) => void save({ permission_mode: e.target.value })}>
               <option value="default">標準（必要な操作ごとに確認）</option>
               <option value="acceptEdits">ファイル編集は自動承認</option>
@@ -162,14 +187,71 @@ function ProviderCard({ p }: { p: ProviderStatus }) {
 
       <div className="form">
         <Field label="既定のモデル">
-          <select className="select" value={conf.default_model ?? ""} onChange={(e) => void save({ default_model: e.target.value })}>
+          <select
+            className="select"
+            value={conf.default_model ?? ""}
+            onChange={(e) => {
+              const next = findModel(p.models, e.target.value);
+              const effort = String(conf.default_effort ?? "");
+              void save({ default_model: e.target.value, default_effort: next?.efforts.includes(effort) ? effort : "" });
+            }}
+          >
             {p.id === "codex" && <option value="">Codexの既定</option>}
             {p.models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </Field>
+        {(() => {
+          const m = findModel(p.models, conf.default_model ?? "");
+          if (!m?.efforts.length) return null;
+          return (
+            <Field label="既定の思考レベル" hint="新しいチャットで使う思考レベル。入力欄の下で会話ごとに変更できます。">
+              <select className="select" value={String(conf.default_effort ?? "")} onChange={(e) => void save({ default_effort: e.target.value })}>
+                <option value="">モデルの既定{m.default_effort ? `（${effortLabel(m.default_effort)}）` : ""}</option>
+                {m.efforts.map((e) => <option key={e} value={e}>{effortLabel(e)}</option>)}
+              </select>
+            </Field>
+          );
+        })()}
         <Field label="CLIのパス" hint="空欄の場合は PATH 上のコマンドを使用します。">
-          <TextSetting value={String(conf.cli_path ?? "")} placeholder={p.id === "claude" ? "claude" : "codex"} onSave={(v) => void save({ cli_path: v })} />
+          <TextSetting browse="file" value={String(conf.cli_path ?? "")} placeholder={p.id === "claude" ? "claude" : "codex"} onSave={(v) => void save({ cli_path: v })} />
         </Field>
+      </div>
+    </div>
+  );
+}
+
+export const FULL_ACCESS_WARNING = [
+  "フルアクセスモードを有効にしますか？",
+  "",
+  "・Claude Code / Codex がコマンド実行・ファイル変更・Blender操作を、確認なしで行います",
+  "・Codex のサンドボックスも解除され、PC上のあらゆるファイルにアクセスできます",
+  "・AIの質問への回答や入力フォームだけは、引き続き確認が表示されます",
+  "",
+  "大切なファイルはバックアップし、必要に応じて Blender のチェックポイントを利用してください。",
+].join("\n");
+
+function FullAccessCard() {
+  const { state, actions } = useStore();
+  const on = Boolean(state.settings.approval.full_access);
+  return (
+    <div className={cx("card", on && "danger-card")}>
+      <div className="row between">
+        <div>
+          <div className="strong">フルアクセスモード</div>
+          <div className="muted small">
+            AIのツール実行・コマンド・ファイル変更をすべて確認なしで許可し、Codex のサンドボックスを解除します
+            （Claude: bypassPermissions / Codex: 承認なし・danger-full-access）。次の送信から適用されます。
+            「モデリングプロンプト」チャットには適用されません。
+          </div>
+        </div>
+        <Toggle
+          checked={on}
+          label={on ? "有効" : "無効"}
+          onChange={(v) => {
+            if (v && !window.confirm(FULL_ACCESS_WARNING)) return;
+            void actions.saveSettings({ approval: { full_access: v } });
+          }}
+        />
       </div>
     </div>
   );
@@ -185,6 +267,7 @@ function AiTab() {
           {state.providersLoading ? <span className="spinner" /> : <Icon name="refresh" size={13} />} 再確認
         </button>
       </div>
+      <FullAccessCard />
       {state.providers.map((p) => <ProviderCard key={p.id} p={p} />)}
       {state.providers.length === 0 && <div className="muted">確認中…</div>}
     </div>
@@ -204,13 +287,16 @@ function McpTab() {
           <dt>Blender</dt><dd>{state.blender.blender}（{state.blender.endpoint}）</dd>
         </dl>
         {state.blender.error && <div className="error-text">{state.blender.error}</div>}
-        <button className="btn small" onClick={() => void actions.guard(() => post("/api/blender/reconnect"))}><Icon name="refresh" size={13} /> 再接続</button>
+        <div className="row gap-sm wrap">
+          <button className="btn small" onClick={() => void actions.guard(() => post("/api/blender/reconnect"))}><Icon name="refresh" size={13} /> 再接続</button>
+          <McpRestartButton />
+        </div>
       </div>
       <Field label="Roxy-BlenderMCP-v2 のフォルダ" hint="このフォルダの .venv にある roxy-blender-mcp を起動します（無い場合は uv run）。MCPのソースは変更しません。">
-        <TextSetting value={m.server_dir} placeholder="I:\Blender\MCP\Roxy-BlenderMCP-v2" onSave={(v) => void save({ server_dir: v })} />
+        <TextSetting browse="folder" value={m.server_dir} placeholder="I:\Blender\MCP\Roxy-BlenderMCP-v2" onSave={(v) => void save({ server_dir: v })} />
       </Field>
       <Field label="起動コマンド（上級者向け・任意）" hint="指定すると上のフォルダ設定より優先します。引数はスペース区切り。">
-        <TextSetting value={m.command} placeholder="例: uv" onSave={(v) => void save({ command: v })} />
+        <TextSetting browse="file" value={m.command} placeholder="例: uv" onSave={(v) => void save({ command: v })} />
         <TextSetting value={m.args.join(" ")} placeholder="例: run --no-sync --directory C:\path roxy-blender-mcp" onSave={(v) => void save({ args: v.trim() ? v.trim().split(/\s+/) : [] })} />
       </Field>
       <Field label="AIに渡すMCPサーバー名">
@@ -278,10 +364,16 @@ function ProjectsTab() {
         <div className="form grow">
           <Field label="名前"><input className="input" value={form.name ?? ""} onChange={(e) => set("name", e.target.value)} /></Field>
           <Field label="関連付ける .blend ファイル" hint="AIに伝えるための関連情報です。ファイルの保存・読み込みは MCP（AI）が行います。">
-            <input className="input" value={form.blend_path ?? ""} placeholder="C:\path\to\scene.blend" onChange={(e) => set("blend_path", e.target.value)} />
+            <div className="row gap-sm">
+              <input className="input grow" value={form.blend_path ?? ""} placeholder="C:\path\to\scene.blend" onChange={(e) => set("blend_path", e.target.value)} />
+              <BrowseButton kind="blend" value={form.blend_path ?? ""} onSelect={(path) => set("blend_path", path)} />
+            </div>
           </Field>
           <Field label="作業フォルダ" hint="AIのカレントディレクトリ。空欄の場合はアプリのデータフォルダ内に作成します。">
-            <input className="input" value={form.work_dir ?? ""} onChange={(e) => set("work_dir", e.target.value)} />
+            <div className="row gap-sm">
+              <input className="input grow" value={form.work_dir ?? ""} onChange={(e) => set("work_dir", e.target.value)} />
+              <BrowseButton kind="folder" value={form.work_dir ?? ""} onSelect={(path) => set("work_dir", path)} />
+            </div>
           </Field>
           <div className="row gap-sm">
             <Field label="Blender ホスト"><input className="input" value={form.blender_host ?? ""} onChange={(e) => set("blender_host", e.target.value)} /></Field>
@@ -329,7 +421,7 @@ function LogsTab() {
   );
 }
 
-export function SettingsDialog({ initialTab, onClose }: { initialTab: SettingsTab; onClose: () => void }) {
+export function SettingsDialog({ initialTab, onClose, exiting = false }: { initialTab: SettingsTab; onClose: () => void; exiting?: boolean }) {
   const [tab, setTab] = useState<SettingsTab>(initialTab);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -337,7 +429,7 @@ export function SettingsDialog({ initialTab, onClose }: { initialTab: SettingsTa
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="modal-scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className={cx("modal-scrim", exiting && "slide-out")} inert={exiting} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="dialog settings" role="dialog" aria-modal="true">
         <div className="settings-nav">
           <div className="strong settings-title">設定</div>

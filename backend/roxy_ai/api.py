@@ -15,22 +15,24 @@ import os
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, JSONResponse, Response
+from pydantic import BaseModel, Field
 
 from . import __version__
 from .adapters import build_adapters
 from .adapters.base import AdapterUnavailable, ApprovalDecision
+from .workflow import ModelingBrief
 from .attachments import AttachmentStore
 from .chat import ChatService, Conflict
 from .config import Paths, Secrets, SettingsStore
 from .db import Database
 from .logs import op, tail
 from .mcp_monitor import BlenderMonitor
+from .path_dialog import select_path
 
 logger = logging.getLogger(__name__)
 
@@ -109,13 +111,21 @@ class ConversationCreate(BaseModel):
     project_id: str
     provider: str
     model: str = ""
+    effort: str = ""
+    mode: Literal["modeling", "prompt"] = "modeling"
 
 
 class ConversationPatch(BaseModel):
     title: str | None = None
     provider: str | None = None
     model: str | None = None
+    effort: str | None = None
     project_id: str | None = None
+    brief: ModelingBrief | None = None
+
+
+class PromptHandoffBody(BaseModel):
+    text: str = Field(min_length=1, max_length=40000)
 
 
 class SendBody(BaseModel):
@@ -123,6 +133,7 @@ class SendBody(BaseModel):
     attachment_ids: list[str] = []
     provider: str
     model: str = ""
+    effort: str = ""
 
 
 class EditBody(SendBody):
@@ -132,6 +143,7 @@ class EditBody(SendBody):
 class RetryBody(BaseModel):
     provider: str
     model: str = ""
+    effort: str = ""
 
 
 class ApprovalBody(BaseModel):
@@ -154,6 +166,11 @@ class ExportBody(BaseModel):
 
 class RevealBody(BaseModel):
     path: str
+
+
+class BrowseBody(BaseModel):
+    kind: Literal["file", "folder", "blend"]
+    path: str = ""
 
 
 class RefreshBody(BaseModel):
@@ -353,7 +370,7 @@ def create_app(paths: Paths, token: str) -> FastAPI:
         if not state.db.get_project(body.project_id):
             raise KeyError(body.project_id)
         state.chat.adapter(body.provider)
-        return state.db.create_conversation(body.project_id, body.provider, body.model)
+        return state.db.create_conversation(body.project_id, body.provider, body.model, effort=body.effort, mode=body.mode)
 
     @app.get("/api/conversations/{cid}")
     async def get_conversation(cid: str):
@@ -362,6 +379,7 @@ def create_app(paths: Paths, token: str) -> FastAPI:
             raise KeyError(cid)
         messages = state.db.list_messages(cid)
         ids = [a for m in messages for a in (m.get("attachments") or [])]
+        ids.extend(conv["draft"].get("attachment_ids") or [])
         run = state.chat.runs.get(cid)
         return {
             "conversation": conv,
@@ -373,11 +391,23 @@ def create_app(paths: Paths, token: str) -> FastAPI:
 
     @app.patch("/api/conversations/{cid}")
     async def patch_conversation(cid: str, body: ConversationPatch):
-        conv = state.db.update_conversation(cid, {k: v for k, v in body.model_dump().items() if v is not None})
+        if body.brief is not None and cid in state.chat.runs:
+            raise Conflict("AIの応答が完了してから制作条件を変更してください。")
+        fields = {k: v for k, v in body.model_dump().items() if v is not None}
+        if body.brief is not None:
+            before = state.db.get_conversation(cid)
+            if not before:
+                raise KeyError(cid)
+            fields["brief"] = {**before["brief"], **body.brief.model_dump(exclude_unset=True)}
+        conv = state.db.update_conversation(cid, fields)
         if not conv:
             raise KeyError(cid)
         await state.hub.publish({"type": "conversation.updated", "conversation": conv})
         return conv
+
+    @app.post("/api/conversations/{cid}/handoff")
+    async def handoff_prompt(cid: str, body: PromptHandoffBody):
+        return await state.chat.handoff_prompt(cid, body.text)
 
     @app.delete("/api/conversations/{cid}")
     async def delete_conversation(cid: str):
@@ -387,15 +417,16 @@ def create_app(paths: Paths, token: str) -> FastAPI:
 
     @app.post("/api/conversations/{cid}/messages")
     async def send(cid: str, body: SendBody):
-        return await state.chat.send(cid, body.text, body.attachment_ids, body.provider, body.model)
+        return await state.chat.send(cid, body.text, body.attachment_ids, body.provider, body.model, body.effort)
 
     @app.post("/api/conversations/{cid}/messages/{mid}/edit")
     async def edit(cid: str, mid: str, body: EditBody):
-        return await state.chat.edit_and_resend(cid, mid, body.text, body.attachment_ids, body.provider, body.model)
+        return await state.chat.edit_and_resend(cid, mid, body.text, body.attachment_ids, body.provider, body.model,
+                                                body.effort)
 
     @app.post("/api/conversations/{cid}/retry")
     async def retry(cid: str, body: RetryBody):
-        return await state.chat.retry(cid, body.provider, body.model)
+        return await state.chat.retry(cid, body.provider, body.model, body.effort)
 
     @app.post("/api/conversations/{cid}/cancel")
     async def cancel(cid: str):
@@ -431,6 +462,10 @@ def create_app(paths: Paths, token: str) -> FastAPI:
 
     @app.get("/api/attachments/{aid}/file")
     async def attachment_file(aid: str, thumb: bool = False):
+        preview = state.attachments.previews.get(aid)
+        if preview is not None:
+            data, mime = preview
+            return Response(data, media_type=mime, headers={"Cache-Control": "no-store"})
         att = state.db.get_attachment(aid)
         if not att:
             raise KeyError(aid)
@@ -466,11 +501,25 @@ def create_app(paths: Paths, token: str) -> FastAPI:
         await state.monitor.start(project["blender_host"], project["blender_port"])
         return state.monitor.public_state()
 
+    @app.post("/api/blender/restart")
+    async def blender_restart():
+        try:
+            return await state.chat.restart_mcp(state.active_project())
+        except Conflict:
+            raise
+        except Exception as error:
+            logger.exception("MCP restart failed")
+            raise HTTPException(503, "MCPを再起動できませんでした。ログを確認して再試行してください。") from error
+
     # System / debug ---------------------------------------------------------------------------
 
     @app.get("/api/logs/{name}")
     async def logs(name: str, lines: int = 200):
         return {"lines": tail(paths.logs, name, lines)}
+
+    @app.post("/api/system/browse")
+    async def browse(body: BrowseBody):
+        return {"path": await asyncio.to_thread(select_path, body.kind, body.path)}
 
     @app.post("/api/system/reveal")
     async def reveal(body: RevealBody):

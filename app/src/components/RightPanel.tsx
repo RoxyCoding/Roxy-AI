@@ -4,6 +4,7 @@ import { useStore } from "../lib/store";
 import { clockTime, cx, relativeTime, seconds } from "../lib/format";
 import { Icon } from "./Icons";
 import { useLightbox } from "./Lightbox";
+import { McpRestartButton } from "./McpRestartButton";
 import { ToolCallRow } from "./ToolCalls";
 import { blenderBadge } from "./TopBar";
 import type { SettingsTab } from "./SettingsDialog";
@@ -24,7 +25,7 @@ function Section({ title, children, right, defaultOpen = true }: { title: string
   );
 }
 
-export function RightPanel({ onClose, onSettings }: { onClose: () => void; onSettings: (tab: SettingsTab) => void }) {
+export function RightPanel({ onClose, onSettings, exiting = false }: { onClose: () => void; onSettings: (tab: SettingsTab) => void; exiting?: boolean }) {
   const { state, actions } = useStore();
   const b = state.blender;
   const badge = blenderBadge(b);
@@ -66,7 +67,7 @@ export function RightPanel({ onClose, onSettings }: { onClose: () => void; onSet
   };
 
   return (
-    <aside className="rpanel">
+    <aside className={cx("rpanel", exiting && "slide-out")} inert={exiting}>
       <div className="rpanel-head">
         <span className="strong">Blender</span>
         <button className="icon-btn" title="閉じる" onClick={onClose}>
@@ -91,6 +92,7 @@ export function RightPanel({ onClose, onSettings }: { onClose: () => void; onSet
             <dt>MCPサーバー</dt>
             <dd>{b.server?.name ? `${b.server.name} ${b.server.version ?? ""}` : b.mcp}</dd>
           </dl>
+          <McpRestartButton />
           {b.error && <div className="error-text">{b.error}</div>}
           {b.addon?.text && b.blender === "connected" && <pre className="mini-pre">{b.addon.text}</pre>}
           {b.blender === "unresponsive" && <p className="error-text">{b.addon?.text}</p>}

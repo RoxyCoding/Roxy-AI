@@ -21,18 +21,9 @@ export function TopBar(props: {
   onSettings: (tab: SettingsTab) => void;
 }) {
   const { state, actions } = useStore();
-  const provider = state.draftProvider;
-  const status = state.providers.find((p) => p.id === provider);
-  const models = status?.models ?? [];
+  const status = state.providers.find((p) => p.id === state.draftProvider);
   const project = state.projects.find((p) => p.id === state.activeProjectId);
   const badge = blenderBadge(state.blender);
-  const running = state.currentId ? Boolean(state.runs[state.currentId]) : false;
-  const enabled = state.boot.providers.filter((p) => state.settings.providers[p.id]?.enabled !== false);
-
-  const switchProvider = (id: string) => {
-    if (id === provider) return;
-    void actions.setDraft(id, state.settings.providers[id]?.default_model ?? "");
-  };
 
   return (
     <header className="topbar">
@@ -42,42 +33,22 @@ export function TopBar(props: {
             <Icon name="sidebar" />
           </button>
         )}
-        <div className="segmented" role="tablist" aria-label="AIの切り替え">
-          {enabled.map((p) => (
-            <button
-              key={p.id}
-              role="tab"
-              aria-selected={p.id === provider}
-              className={cx(p.id === provider && "on")}
-              disabled={running}
-              title={running ? "応答生成中は切り替えできません" : `${p.name} に切り替え`}
-              onClick={() => switchProvider(p.id)}
-            >
-              {p.name}
-            </button>
-          ))}
-        </div>
-        <select
-          className="select"
-          value={state.draftModel}
-          disabled={running}
-          title="モデル"
-          onChange={(e) => void actions.setDraft(provider, e.target.value)}
-        >
-          {provider === "codex" && <option value="">既定のモデル</option>}
-          {models.map((m) => (
-            <option key={m.id} value={m.id} title={m.description}>
-              {m.name}
-              {m.supports_images ? "" : "（画像非対応）"}
-            </option>
-          ))}
-          {state.draftModel && !models.some((m) => m.id === state.draftModel) && (
-            <option value={state.draftModel}>{state.draftModel}</option>
-          )}
-        </select>
+        <span className="chat-title ellipsis">{state.detail?.conversation.title || (state.draftMode === "prompt" ? "モデリングプロンプト" : "新しいチャット")}</span>
         {status && !status.auth_ok && !state.providersLoading && (
           <button className="pill bad" onClick={() => props.onSettings("ai")} title={status.detail}>
             <Icon name="alert" size={12} /> 未ログイン
+          </button>
+        )}
+        {state.settings.approval.full_access && state.draftMode !== "prompt" && (
+          <button
+            className="pill bad full-access"
+            title="承認なし・サンドボックスなしで実行中。クリックで解除"
+            onClick={() => {
+              if (window.confirm("フルアクセスモードを解除しますか？（次の送信から、通常の承認フローに戻ります）"))
+                void actions.saveSettings({ approval: { full_access: false } });
+            }}
+          >
+            <Icon name="alert" size={12} /> フルアクセス
           </button>
         )}
       </div>

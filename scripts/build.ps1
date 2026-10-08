@@ -10,7 +10,10 @@ New-Item -ItemType Directory -Force $bin | Out-Null
 Push-Location "$root\backend"
 # The Claude Agent SDK's bundled CLI (~250MB) is excluded: the app uses the
 # Claude Code CLI installed on the user's PATH (or the path set in Settings).
-& $py -m PyInstaller --noconfirm --clean --onefile --noconsole `
+# Console app on purpose: the desktop shell starts it with CREATE_NO_WINDOW, so it has a
+# hidden console that every child (claude, codex, MCP servers, shells) inherits instead of
+# each opening its own terminal window.
+& $py -m PyInstaller --noconfirm --clean --onefile `
     --name roxy-ai-backend `
     --distpath "$root\backend\build\dist" --workpath "$root\backend\build\work" --specpath "$root\backend\build" `
     --collect-submodules uvicorn --collect-submodules keyring `

@@ -9,6 +9,7 @@ accepts; anything an AI cannot take is reported with the reason.
 from __future__ import annotations
 
 import hashlib
+import io
 import mimetypes
 import re
 import shutil
@@ -47,6 +48,22 @@ class AttachmentStore:
     def __init__(self, db: Database, root: Path):
         self._db = db
         self._root = root
+        self.previews: dict[str, tuple[bytes, str]] = {}
+
+    def preview_image(self, data: bytes, mime: str) -> str:
+        if len(data) > MAX_UPLOAD:
+            raise ValueError("プレビュー画像が大きすぎます（上限100MB）")
+        with Image.open(io.BytesIO(data)) as image:
+            mime = Image.MIME.get(image.format, "")
+            image.verify()
+        if not mime.startswith("image/"):
+            raise ValueError("プレビューできない画像形式です")
+        # ponytail: previews live only for this process; evict oldest at 100MB.
+        while self.previews and sum(len(item[0]) for item in self.previews.values()) + len(data) > MAX_UPLOAD:
+            del self.previews[next(iter(self.previews))]
+        aid = "preview_" + new_id()
+        self.previews[aid] = (data, mime)
+        return aid
 
     def _dir(self, aid: str) -> Path:
         return self._root / aid[:2] / aid

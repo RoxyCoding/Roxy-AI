@@ -34,11 +34,22 @@ from .context import PROVIDER_NAMES, plan_context, render_handoff
 from .db import Database, new_id
 from .logs import op
 from .mcp_monitor import BlenderMonitor, mcp_server_command
+from .workflow import ModelingBrief, ModelingProgress, REPORTS, visible_text
 
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_OUTPUT = 20000
 PERSIST_EVERY = 3.0
+
+
+def _model_info(models: list, model: str):
+    """The ModelInfo for `model`; an empty or "default" model means the provider default."""
+    for m in models:
+        if m.id == model:
+            return m
+    if not model or model == "default":
+        return next((m for m in models if m.is_default), None)
+    return None
 
 
 class Conflict(Exception):
@@ -55,6 +66,10 @@ class Run:
     user_message_id: str
     assistant_message_id: str
     lock_key: str
+    effort: str = ""
+    mode: str = "modeling"
+    progress: dict | None = None
+    report_cursor: int = 0
     text: str = ""
     status_text: str = "準備中…"
     tool_calls: list[dict] = field(default_factory=list)
@@ -73,6 +88,8 @@ class Run:
             "conversation_id": self.conversation_id,
             "provider": self.provider,
             "model": self.model,
+            "effort": self.effort,
+            "progress": self.progress,
             "assistant_message_id": self.assistant_message_id,
             "text": self.text,
             "status_text": self.status_text,
@@ -99,6 +116,7 @@ class ChatService:
         self.locks: dict[str, str] = {}  # blender endpoint -> conversation id
         self.session_allow: dict[str, set[str]] = {}
         self._preview_task: asyncio.Task | None = None
+        self.mcp_restarting = False
 
     # Helpers -----------------------------------------------------------------
 
@@ -121,13 +139,43 @@ class ChatService:
         d.mkdir(parents=True, exist_ok=True)
         return str(d)
 
-    def _system_append(self, project: dict) -> str:
+    def _system_append(self, project: dict, mode: str = "modeling") -> str:
+        if mode == "prompt":
+            return (
+                "あなたはRoxyのモデリングプロンプト相談役です。日本語で、作るものの検討からBlender向けの制作指示まで相談に乗ってください。\n"
+                "作るものが未定なら、用途・好み・難易度を確認し、具体的な候補を2〜3案提案してください。"
+                "確認する質問は一度に2〜3個までに絞ってください。参考画像や三面図があれば形状や特徴を読み取ってください。\n"
+                "候補から選んでもらうときは、質問ツール（AskUserQuestion / request_user_input）を使って選択肢を表示してください。\n"
+                "対象、用途、形状・構造、寸法・比率、材質・色・質感、必要な細部、品質、仕上げを相談して具体化してください。"
+                "未指定の条件は推奨案として示し、ユーザーが決めた条件を優先してください。\n"
+                '確定した条件が変わるたび、変更した項目だけを```roxy-briefのJSONブロックで報告してください。'
+                '使用できるキーはtarget（作るもの）、use（用途）、shape（形・構造）、dimensions（寸法）、materials（素材）、colors（色）です。'
+                '値は文字列、取り消した条件は空文字にしてください。未確定の候補を確定条件として登録しないでください。'
+                'このブロックは画面の条件一覧を更新するためのもので、本文で形式を説明しないでください。\n'
+                "条件がまとまったら、別のチャットに貼るだけで使える日本語のモデリングプロンプトを```textのコードブロックにまとめてください。"
+                "その後の修正相談には、修正済みのプロンプト全体を提示してください。\n"
+                "このチャットでは相談とプロンプト作成だけを行います。Blender操作、画像生成、コマンド実行、ファイルの保存・変更は行わないでください。\n"
+                f"現在のプロジェクト: {project['name']}"
+            )
         name = self.settings.get()["mcp"].get("server_name") or "blender"
         lines = [
             "あなたはデスクトップアプリ「Roxy Blender AI」から利用されています。",
             f"Blenderの操作・確認は MCP サーバー「{name}」(Roxy-BlenderMCP-v2) のツールで行い、"
             "そのサーバーが示す指示・ガイド・ルールに従ってください。",
             "ユーザーが別の言語で書かない限り、日本語で回答してください。",
+            "現在の制作条件が添えられている場合は、その条件を制作の基準にしてください。"
+            "引き継いだプロンプトや参考画像と食い違う場合も、制作条件を優先してください。"
+            "ユーザーが今回のメッセージで明示的に条件の変更を依頼した場合は、その変更を優先してください。",
+            "画像生成の結果は画像コンテンツとして返し、プレビュー表示してください。"
+            "ユーザーが明示的に保存を依頼しない限り、生成画像をファイルに保存しないでください。",
+            "画像生成後は、保存指定がないことや、保存・追加編集をしていないことを毎回説明しないでください。"
+            "画像の説明は必要な場合だけ短く添えてください。",
+            'モデリング制作では、工程の開始・完了時に```roxy-progressのJSONブロックで進捗を報告してください。'
+            '形式は{"stage":"shape","completed":[],"detail":"形状を作成中"}です。'
+            'stageはshape（形状）、details（細部）、materials（素材）、finish（仕上げ）、done（制作完了）。'
+            'completedは実際に完了した工程のキーの配列です。作業を省略した場合は完了扱いにせず、detailに記してください。'
+            '実行結果を確認できた工程だけを完了にし、制作が完了するまでdoneを報告しないでください。'
+            '相談やシーン確認だけの依頼では制作の進捗を報告しないでください。このブロックの形式は本文で説明しないでください。',
             f"現在のプロジェクト: {project['name']}",
         ]
         if project.get("blend_path"):
@@ -147,8 +195,12 @@ class ChatService:
     # Starting runs -------------------------------------------------------------
 
     def _check_free(self, conversation_id: str, project: dict) -> str:
+        if self.mcp_restarting:
+            raise Conflict("MCPを再起動中です。完了してから送信してください。")
         if conversation_id in self.runs:
             raise Conflict("この会話は応答を生成中です。完了または中断してから送信してください。")
+        if (self.db.get_conversation(conversation_id) or {}).get("mode") == "prompt":
+            return f"prompt:{conversation_id}"
         key = self.endpoint(project)
         holder = self.locks.get(key)
         if holder and holder != conversation_id:
@@ -159,8 +211,59 @@ class ChatService:
             )
         return key
 
+    async def restart_mcp(self, project: dict) -> dict:
+        if self.mcp_restarting:
+            raise Conflict("MCPを再起動中です。")
+        if self.runs:
+            raise Conflict("AIの応答生成中はMCPを再起動できません。完了または中断してから再起動してください。")
+        self.mcp_restarting = True
+        try:
+            for adapter in self.adapters.values():
+                await adapter.shutdown()
+            await self.monitor.start(project["blender_host"], project["blender_port"])
+            op("mcp.restart", project=project["id"])
+            return self.monitor.public_state()
+        finally:
+            self.mcp_restarting = False
+
+    async def handoff_prompt(self, conversation_id: str, text: str) -> dict:
+        if not text.strip():
+            raise ValueError("引き継ぐプロンプトが空です。")
+        source = self.db.get_conversation(conversation_id)
+        if not source:
+            raise KeyError(conversation_id)
+        if source["mode"] != "prompt":
+            raise ValueError("相談チャットから制作チャットへ引き継いでください。")
+        if conversation_id in self.runs:
+            raise Conflict("相談の応答が完了してから引き継いでください。")
+        self.adapter(source["provider"])
+        ids = list(dict.fromkeys(aid for m in self.db.list_messages(conversation_id) if m["role"] == "user" for aid in m["attachments"]))
+        attachments = self.db.get_attachments(ids)
+        if len(attachments) != len(ids):
+            raise ValueError("相談に添付されたファイルが見つかりません。添付し直してから引き継いでください。")
+        images = [a for a in attachments if a["mime"].startswith("image/")]
+        conv = self.db.create_conversation(source["project_id"], source["provider"], source["model"], effort=source["effort"])
+        copied = []
+        try:
+            for image in images:
+                path = self.attachments.file_for(image)
+                if path is None:
+                    raise ValueError(f"参考画像「{image['name']}」が見つかりません。添付し直してから引き継いでください。")
+                # Each chat owns its copy, so deleting either chat preserves the other.
+                data = await asyncio.to_thread(path.read_bytes)
+                copied.append(await asyncio.to_thread(self.attachments.save_bytes, data, image["name"], image["mime"], "upload", conv["id"]))
+            conv = self.db.update_conversation(conv["id"], {"brief": source["brief"], "draft": {
+                "text": text, "attachment_ids": [a["id"] for a in copied],
+            }})
+        except Exception:
+            for path in self.db.delete_conversation(conv["id"]):
+                self.attachments.delete_files(path)
+            raise
+        await self.publish({"type": "conversation.updated", "conversation": conv})
+        return {"conversation": conv, "attachments": copied}
+
     async def send(self, conversation_id: str, text: str, attachment_ids: list[str],
-                   provider: str, model: str) -> dict:
+                   provider: str, model: str, effort: str = "") -> dict:
         conv = self.db.get_conversation(conversation_id)
         if not conv:
             raise KeyError(conversation_id)
@@ -173,14 +276,15 @@ class ChatService:
         self.db.assign_attachments(attachment_ids, conversation_id)
         user_msg = self.db.add_message(conversation_id, "user", text, provider=provider, model=model,
                                        attachments=attachment_ids)
-        fields: dict[str, Any] = {"provider": provider, "model": model}
+        fields: dict[str, Any] = {"provider": provider, "model": model, "effort": effort, "draft": {}}
         if not conv["title"]:
             first = text.strip().splitlines()[0] if text.strip() else "画像の相談"
             fields["title"] = first[:40]
         conv = self.db.update_conversation(conversation_id, fields)
         assistant = self.db.add_message(conversation_id, "assistant", "", provider=provider, model=model,
                                         status="streaming")
-        run = Run(new_id(), conversation_id, project["id"], provider, model, user_msg["id"], assistant["id"], lock_key)
+        run = Run(new_id(), conversation_id, project["id"], provider, model, user_msg["id"], assistant["id"], lock_key,
+                  effort=effort, mode=conv["mode"])
         self.runs[conversation_id] = run
         self.locks[lock_key] = conversation_id
         self.db.touch_project(project["id"])
@@ -188,12 +292,13 @@ class ChatService:
         await self.publish({"type": "message.created", "message": user_msg})
         await self.publish({"type": "message.created", "message": assistant})
         await self.publish({"type": "run.started", "run": run.snapshot()})
-        op("run.start", conversation=conversation_id, provider=provider, model=model, run=run.id)
+        op("run.start", conversation=conversation_id, provider=provider, model=model, effort=effort, run=run.id)
         run.task = asyncio.create_task(self._execute(run, user_msg, project))
         return {"run": run.snapshot(), "user_message": user_msg, "assistant_message": assistant}
 
     async def edit_and_resend(self, conversation_id: str, message_id: str, text: str,
-                              attachment_ids: list[str] | None, provider: str, model: str) -> dict:
+                              attachment_ids: list[str] | None, provider: str, model: str,
+                              effort: str = "") -> dict:
         msg = self.db.get_message(message_id)
         if not msg or msg["conversation_id"] != conversation_id or msg["role"] != "user":
             raise KeyError(message_id)
@@ -201,20 +306,25 @@ class ChatService:
         self._check_free(conversation_id, self.db.get_project(conv["project_id"]))
         ids = msg["attachments"] if attachment_ids is None else attachment_ids
         await self._rewind(conversation_id, msg["seq"])
-        return await self.send(conversation_id, text, ids, provider, model)
+        return await self.send(conversation_id, text, ids, provider, model, effort)
 
-    async def retry(self, conversation_id: str, provider: str, model: str) -> dict:
+    async def retry(self, conversation_id: str, provider: str, model: str, effort: str = "") -> dict:
         msgs = self.db.list_messages(conversation_id)
         last_user = next((m for m in reversed(msgs) if m["role"] == "user"), None)
         if not last_user:
             raise ValueError("再送信できるメッセージがありません")
         return await self.edit_and_resend(conversation_id, last_user["id"], last_user["content"],
-                                          last_user["attachments"], provider, model)
+                                          last_user["attachments"], provider, model, effort)
 
     async def _rewind(self, conversation_id: str, seq: int) -> None:
         """Drop messages from `seq` on. The AIs' internal sessions contain the old
         branch, so they are dropped too and the next turn hands over the text."""
         self.db.delete_messages_from(conversation_id, seq)
+        conv = self.db.get_conversation(conversation_id)
+        if conv["mode"] == "prompt":
+            previous = next((m["meta"]["brief"] for m in reversed(self.db.list_messages(conversation_id)) if "brief" in m["meta"]), {})
+            conv = self.db.update_conversation(conversation_id, {"brief": previous})
+            await self.publish({"type": "conversation.updated", "conversation": conv})
         self.db.clear_ai_sessions(conversation_id)
         for a in self.adapters.values():
             await a.forget(conversation_id)
@@ -246,11 +356,14 @@ class ChatService:
                     tc["status"] = "cancelled" if final_status == "cancelled" else "unknown"
             assistant = self.db.get_message(run.assistant_message_id)
             if assistant is not None:
-                meta = {"notices": run.notices, "usage": run.usage, "duration": time.time() - run.started_at}
+                meta = {"notices": run.notices, "usage": run.usage, "duration": time.time() - run.started_at,
+                        "effort": run.effort, "progress": run.progress}
+                if run.mode == "prompt":
+                    meta["brief"] = self.db.get_conversation(run.conversation_id)["brief"]
                 if result and result.model:
                     meta["resolved_model"] = result.model
                 msg = self.db.update_message(run.assistant_message_id, {
-                    "content": run.text, "status": "complete" if final_status == "completed" else final_status,
+                    "content": visible_text(run.text), "status": "complete" if final_status == "completed" else final_status,
                     "error": error,
                     "tool_calls": run.tool_calls, "meta": meta,
                 })
@@ -282,6 +395,13 @@ class ChatService:
                 await self._notice(run, f"{adapter.name} の既存セッションを再開し、その間の {'/'.join(others)} とのやり取りを共有しました。")
 
         status = await adapter.status()
+        effort = run.effort
+        if effort:
+            info = _model_info(status.models, run.model)
+            if info is None or effort not in info.efforts:
+                await self._notice(run, f"選択中のモデルは思考レベル「{effort}」に対応していないため、モデルの既定で実行します。")
+                effort = ""
+                run.effort = ""  # record what was actually used
         supports_images = status.supports_images
         if hasattr(adapter, "model_supports_images"):
             supports_images = adapter.model_supports_images(run.model)  # type: ignore[attr-defined]
@@ -295,6 +415,9 @@ class ChatService:
         parts: list[InputPart] = []
         if handoff:
             parts.append(InputPart("text", text=handoff))
+        brief = self.db.get_conversation(run.conversation_id).get("brief") or {}
+        if brief:
+            parts.append(InputPart("text", text="現在の制作条件（ユーザーの明示的な変更指示があれば更新してください）:\n" + json.dumps(brief, ensure_ascii=False)))
         if user_msg["content"]:
             parts.append(InputPart("text", text=user_msg["content"]))
         parts.extend(prepared.parts)
@@ -304,11 +427,16 @@ class ChatService:
             parts=parts,
             cwd=self.work_dir(project),
             model=run.model,
+            effort=effort,
             session_id=session_id,
-            system_append=self._system_append(project),
-            mcp_servers=self._mcp_servers(project),
+            system_append=self._system_append(project, run.mode),
+            mcp_servers={} if run.mode == "prompt" else self._mcp_servers(project),
             extra_dirs=[str(self.paths.attachments)],
+            prompt_only=run.mode == "prompt",
+            full_access=self.full_access_for(run),
         )
+        if req.full_access:
+            await self._notice(run, "フルアクセスモードで実行しています（承認なし・サンドボックスなし）。")
 
         async def emit(ev):
             await self._on_event(run, ev)
@@ -335,12 +463,33 @@ class ChatService:
         now = time.time()
         if now - run.last_persist > PERSIST_EVERY:
             run.last_persist = now
-            self.db.update_message(run.assistant_message_id, {"content": run.text, "tool_calls": run.tool_calls})
+            meta = {"progress": run.progress}
+            if run.mode == "prompt":
+                meta["brief"] = self.db.get_conversation(run.conversation_id)["brief"]
+            self.db.update_message(run.assistant_message_id, {"content": visible_text(run.text), "tool_calls": run.tool_calls,
+                                                            "meta": meta})
+
+    async def _update_reports(self, run: Run) -> None:
+        for match in REPORTS.finditer(run.text, run.report_cursor):
+            run.report_cursor = match.end()
+            try:
+                if match[1] == "brief" and run.mode == "prompt":
+                    patch = ModelingBrief.model_validate_json(match[2]).model_dump(exclude_unset=True)
+                    conv = self.db.get_conversation(run.conversation_id)
+                    if patch and conv:
+                        conv = self.db.update_conversation(run.conversation_id, {"brief": {**conv["brief"], **patch}})
+                        await self.publish({"type": "conversation.updated", "conversation": conv})
+                elif match[1] == "progress" and run.mode == "modeling":
+                    run.progress = ModelingProgress.model_validate_json(match[2]).model_dump()
+                    await self.publish({"type": "run.progress", "conversation_id": run.conversation_id, "progress": run.progress})
+            except ValueError:
+                logger.debug("Ignoring invalid %s report", match[1])
 
     async def _on_event(self, run: Run, ev: Any) -> None:
         cid = run.conversation_id
         if isinstance(ev, TextDelta):
             run.text += ev.text
+            await self._update_reports(run)
             run.status_text = "応答中…"
             await self.publish({"type": "run.delta", "conversation_id": cid, "message_id": run.assistant_message_id,
                                 "text": ev.text})
@@ -359,9 +508,7 @@ class ChatService:
             output = ev.output if len(ev.output) <= MAX_TOOL_OUTPUT else ev.output[:MAX_TOOL_OUTPUT] + "\n…（省略）"
             images = []
             for mime, data in ev.images:
-                att = self.attachments.save_bytes(data, f"{tc['tool'] or 'tool'}.{mime.split('/')[-1]}", mime,
-                                                  "tool_image", cid)
-                images.append(att["id"])
+                images.append(self.attachments.preview_image(data, mime))
             tc.update(status="ok" if ev.ok else "error", output=output, images=images, ended_at=time.time())
             run.status_text = "考え中…"
             await self.publish({"type": "run.tool", "conversation_id": cid, "tool_call": tc, "status_text": run.status_text})
@@ -400,7 +547,17 @@ class ChatService:
 
     # Approvals ---------------------------------------------------------------------
 
+    def full_access_for(self, run: Run) -> bool:
+        """Full access applies to normal chats only, never to the read-only prompt chat."""
+        return run.mode != "prompt" and bool(self.settings.get()["approval"].get("full_access"))
+
     async def _approve(self, run: Run, req: ApprovalRequest) -> ApprovalDecision:
+        if run.mode == "prompt" and req.kind != "question":
+            return ApprovalDecision(allow=False, message="このチャットでは相談とプロンプト作成だけを行ってください。")
+        if self.full_access_for(run) and req.kind != "question" and not (req.schema or {}).get("properties"):
+            # Questions and input forms still need the user's answer; everything else runs.
+            op("approval.full_access", conversation=run.conversation_id, kind=req.kind, title=req.title)
+            return ApprovalDecision(allow=True)
         s = self.settings.get()
         blender = s["mcp"].get("server_name") or "blender"
         allowed = self.session_allow.setdefault(run.conversation_id, set())
