@@ -1,0 +1,9 @@
+backend/.venv/
+backend/build/
+**/__pycache__/
+*.egg-info/
+app/node_modules/
+app/dist/
+app/src-tauri/target/
+app/src-tauri/gen/
+app/src-tauri/binaries/*.exe

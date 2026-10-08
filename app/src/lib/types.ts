@@ -1,0 +1,218 @@
+// Mirrors the backend's JSON (backend/roxy_ai).
+
+export type ProviderId = "claude" | "codex" | string;
+
+export interface Project {
+  id: string;
+  name: string;
+  blend_path: string;
+  work_dir: string;
+  blender_host: string;
+  blender_port: number;
+  notes: string;
+  created_at: number;
+  updated_at: number;
+  conversation_count?: number;
+}
+
+export interface Conversation {
+  id: string;
+  project_id: string;
+  title: string;
+  provider: ProviderId;
+  model: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  server: string;
+  tool: string;
+  input: unknown;
+  status: "running" | "ok" | "error" | "cancelled" | "unknown";
+  output: string;
+  images: string[];
+  started_at: number;
+  ended_at: number | null;
+}
+
+export interface Message {
+  id: string;
+  conversation_id: string;
+  seq: number;
+  role: "user" | "assistant" | "notice";
+  content: string;
+  provider: ProviderId;
+  model: string;
+  status: "complete" | "streaming" | "error" | "cancelled";
+  error: string;
+  tool_calls: ToolCall[];
+  attachments: string[];
+  meta: { notices?: string[]; usage?: Record<string, unknown>; duration?: number; resolved_model?: string };
+  created_at: number;
+}
+
+export interface Attachment {
+  id: string;
+  conversation_id: string | null;
+  kind: "upload" | "tool_image" | "preview";
+  name: string;
+  mime: string;
+  size: number;
+  path: string;
+}
+
+export interface AiSession {
+  provider: ProviderId;
+  session_id: string;
+  synced_seq: number;
+  model: string;
+}
+
+export interface Approval {
+  id: string;
+  conversation_id: string;
+  kind: "tool" | "command" | "file_change" | "permissions" | "mcp_elicitation" | "question";
+  title: string;
+  detail: string;
+  tool_name: string;
+  server: string;
+  input: unknown;
+  questions: { id: string; header: string; question: string; options: { label: string; description?: string }[]; multi: boolean }[];
+  schema: { properties?: Record<string, { type?: string; title?: string; description?: string; enum?: string[]; default?: unknown }>; required?: string[] } | null;
+  allow_session: boolean;
+  read_only: boolean;
+}
+
+export interface RunSnapshot {
+  id: string;
+  conversation_id: string;
+  provider: ProviderId;
+  model: string;
+  assistant_message_id: string;
+  text: string;
+  status_text: string;
+  tool_calls: ToolCall[];
+  notices: string[];
+  started_at: number;
+  approvals: Approval[];
+  cancel_requested: boolean;
+}
+
+export interface ModelInfo {
+  id: string;
+  name: string;
+  description: string;
+  is_default: boolean;
+  supports_images: boolean;
+}
+
+export interface ProviderStatus {
+  id: ProviderId;
+  name: string;
+  available: boolean;
+  version?: string;
+  account?: string;
+  auth_ok?: boolean;
+  detail?: string;
+  models: ModelInfo[];
+  supports_images?: boolean;
+  image_mimes?: string[];
+}
+
+export interface BlenderState {
+  mcp: "stopped" | "starting" | "running" | "error";
+  blender: "unknown" | "connected" | "disconnected" | "unresponsive";
+  endpoint: string;
+  error: string;
+  server: { name?: string; version?: string };
+  addon: { text: string } | null;
+  tools: { name: string; description: string; read_only: boolean; app_only: boolean }[];
+  scene: null | {
+    text: string;
+    scene?: string;
+    counts?: string;
+    active?: string | null;
+    selected?: string[];
+    mode?: string;
+    file_line?: string;
+    columns?: string[];
+    rows?: string[];
+    at: number;
+  };
+  preview: null | { attachment_id: string; at: number; info: Record<string, unknown> };
+  updated_at: number;
+}
+
+export interface Settings {
+  theme: "system" | "light" | "dark";
+  default_provider: ProviderId;
+  providers: {
+    claude: { enabled: boolean; cli_path: string; default_model: string; auth_mode: "cli" | "api_key"; permission_mode: string };
+    codex: { enabled: boolean; cli_path: string; default_model: string; sandbox: string; approval_policy: string };
+    [k: string]: Record<string, unknown> & { enabled: boolean; default_model: string };
+  };
+  mcp: {
+    server_dir: string;
+    command: string;
+    args: string[];
+    server_name: string;
+    inject_into_ai: boolean;
+    auto_preview: boolean;
+    preview_max_size: number;
+    monitor_enabled: boolean;
+  };
+  approval: { auto_approve_readonly_mcp: boolean; auto_approve_blender_mcp: boolean };
+  context: { handoff_max_chars: number };
+  ui: { right_panel_open: boolean; sidebar_open: boolean };
+  last_project_id: string | null;
+}
+
+export interface Bootstrap {
+  version: string;
+  settings: Settings;
+  secrets: Record<string, boolean>;
+  projects: Project[];
+  active_project_id: string;
+  providers: { id: ProviderId; name: string }[];
+  blender: BlenderState;
+  runs: RunSnapshot[];
+  data_dir: string;
+}
+
+export interface ConversationDetail {
+  conversation: Conversation;
+  messages: Message[];
+  attachments: Record<string, Attachment>;
+  sessions: AiSession[];
+  run: RunSnapshot | null;
+}
+
+export interface SearchHit {
+  conversation_id: string;
+  title: string;
+  project_id: string;
+  updated_at: number;
+  snippet: string | null;
+}
+
+export type ServerEvent =
+  | { type: "hello"; blender: BlenderState; runs: RunSnapshot[] }
+  | { type: "pong" }
+  | { type: "blender.state"; state: BlenderState }
+  | { type: "blender.tool_result"; conversation_id: string; tool_call: ToolCall }
+  | { type: "conversation.updated"; conversation: Conversation }
+  | { type: "conversation.deleted"; conversation_id: string }
+  | { type: "conversation.rewound"; conversation_id: string; from_seq: number }
+  | { type: "message.created"; message: Message }
+  | { type: "message.updated"; message: Message }
+  | { type: "run.started"; run: RunSnapshot }
+  | { type: "run.delta"; conversation_id: string; message_id: string; text: string }
+  | { type: "run.tool"; conversation_id: string; tool_call: ToolCall; status_text: string }
+  | { type: "run.status"; conversation_id: string; status_text: string }
+  | { type: "run.notice"; conversation_id: string; text: string }
+  | { type: "run.finished"; conversation_id: string; run_id: string; status: string; error: string }
+  | { type: "approval.request"; approval: Approval }
+  | { type: "approval.resolved"; id: string; conversation_id: string };
