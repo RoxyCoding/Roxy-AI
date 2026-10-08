@@ -24,7 +24,7 @@ UE5 書き出し・Guide 管理などの Blender 制作機能はすべて
    │                                                          ▼
    │                                          roxy-blender-mcp ─→ Blender アドオン (:9876)
    └─ MCP モニター ……… GUI 表示専用の MCP クライアント ──────────┘
-        （get_addon_status / get_scene_info / viewport_capture のみ）
+        （get_addon_status / scene_state / get_scene_info / viewport_capture のみ）
 ```
 
 | 場所 | 役割 |
@@ -99,6 +99,16 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1     # アプリ起動�
 （このフォルダの隣の `..\MCP\Roxy-BlenderMCP-v2` は自動検出されます）。
 Blender 側は 3D ビューで N キー →「Roxy Blender MCP」タブから接続します。
 
+シーン変更の自動検知には、更新済みの MCP サーバーとプロトコル20以降の Blender アドオンが必要です。
+アドオンを `roxy-blender-mcp update` で更新したら、Blender とアプリを再起動してください。
+GUI は3秒ごとに共有カウンターを確認し、変更時にシーン情報を取得します。
+プレビューは「シーンが変更されたらプレビューを自動更新する」がオンの場合に更新します。
+旧アドオンでは更新案内を表示し、手動更新と従来のAI操作後の更新を利用できます。
+
+MCP の起動はチェックアウト内の実行ファイルを優先し、無ければ `uv run --no-sync` を使います。
+初回セットアップや依存関係の変更後は、MCP クライアントを終了して MCP フォルダーで `uv sync` を実行してください。
+自分で起動コマンドを指定している場合は、その設定が優先されます。
+
 ### ブラウザでのデバッグ（Tauri なし）
 
 ```powershell
@@ -121,6 +131,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 ```powershell
 cd backend; .venv\Scripts\python.exe -m pytest -q     # バックエンド単体テスト
 cd app; npm run typecheck                               # GUI 型チェック
+node tests/right-panel.mjs                              # 右パネルの構造化データ・旧形式の表示
 ```
 
 ---
@@ -144,10 +155,10 @@ cd app; npm run typecheck                               # GUI 型チェック
 
 | 不足 | 影響 | 現在の対応 |
 |---|---|---|
-| シーン変更の通知（イベント）がない | GUI はシーン変化を検知できない | AI が非読み取りの Blender ツールを使った後と、手動更新時に再取得 |
-| 選択オブジェクトを構造化データで返すツールがない | `get_scene_info` のテキスト先頭行を解析して表示 | 書式が変わると表示が崩れる可能性あり（全文も表示） |
-| `get_scene_info` / `look` などに `readOnlyHint` が付いていない | 「読み取り専用は自動承認」の対象にならず、毎回承認が必要 | 「この会話では常に許可」または設定で Blender MCP を一括自動承認 |
+| プッシュ型のシーン変更通知（イベント）がない | GUI が変更を確認する必要がある | `scene_state` を3秒ごとにポーリング。旧アドオンでは手動更新とAI操作後の更新 |
+| 旧MCPのシーン情報はテキストのみ | 名前や書式によって表示が崩れる可能性がある | 新MCPの `structuredContent` を優先し、旧MCPのみテキストを解析 |
+| 旧MCPには一部の読み取り専用注釈がない | 自動承認の対象にならないことがある | 新MCPの `readOnlyHint` を取得。承認の設定は従来どおり適用 |
 | ビューポート画像の保存先 (`viewport_store`) がプロセスごと | AI の `look` 結果と GUI のプレビューは別取得 | AI の画像結果はチャットと右パネル「MCPの結果」に表示 |
 | `.blend` を開く／保存する専用ツールがない | GUI はプロジェクトと .blend の関連付け情報のみ管理 | ファイル操作は AI が MCP（`execute_blender_code` / `checkpoint`）で行う |
-| 起動時の Blender ハンドシェイクが、Blender が応答しないと MCP の初期化を止める | Blender が応答しない間、AI 側の MCP 接続が 30 秒でタイムアウトする | GUI は「Blender応答なし」と表示し、AI 実行時にも通知 |
-| `uv run` 起動は他インスタンス実行中に venv 同期で失敗することがある | MCP が起動できない | チェックアウトの `.venv\Scripts\roxy-blender-mcp.exe` を直接起動（無ければ `uv run`） |
+| 旧MCPの起動時ハンドシェイクが初期化を止めることがある | AI 側の MCP 接続がタイムアウトする | 新MCPは接続を遅延。無応答メッセージも「Blender応答なし」と判定し、詳細取得を中止 |
+| `uv run` 起動時の環境同期が実行中のファイルと競合することがある | MCP が起動できない | チェックアウトの実行ファイルを直接起動し、フォールバックは `uv run --no-sync` |

@@ -107,7 +107,7 @@ def test_mcp_command_prefers_checkout_venv(tmp_path):
     cmd = mcp_server_command(s, "localhost", 9877)
     assert cmd["command"] == str(exe) and cmd["env"] == {"BLENDER_HOST": "localhost", "BLENDER_PORT": "9877"}
     s["mcp"]["server_dir"] = str(tmp_path / "missing")
-    assert mcp_server_command(s, "h", 1)["args"][:2] == ["run", "--directory"]
+    assert mcp_server_command(s, "h", 1)["args"][:3] == ["run", "--no-sync", "--directory"]
 
 
 def test_tool_parsers():

@@ -3,7 +3,7 @@
 The AIs start their own copy of the MCP server and call it directly. This
 module starts one more copy, as a plain MCP client, purely for what the GUI
 shows: connection state, the tool list, scene facts and viewport previews. It
-only calls tools the MCP itself provides (get_addon_status, get_scene_info,
+only calls tools the MCP itself provides (get_addon_status, scene_state, get_scene_info,
 viewport_capture) and never edits the scene.
 
 The Blender addon accepts several clients at once and runs their commands one
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import os
 import re
@@ -29,14 +30,16 @@ from .config import SettingsStore
 
 logger = logging.getLogger(__name__)
 
-PROBE_INTERVAL = 10.0
+PROBE_INTERVAL = 3.0
 STATUS_TIMEOUT = 25.0
+SCENE_STATE_TIMEOUT = 8.0
 RECHECK_UNRESPONSIVE = 30.0
 UNRESPONSIVE_MSG = (
     "Blender は接続を受け付けていますが、コマンドに応答しません。"
     "Blender でダイアログやモーダル操作が開いていないか、Roxy Blender MCP パネルの接続状態を確認してください。"
 )
 SCENE_FIELDS = ["location", "size", "details", "materials", "modifiers"]
+ADDON_UPDATE_MSG = "シーン変更を自動検知するには、Blenderアドオンを更新してBlenderを再起動してください。"
 HEADER_RE = re.compile(
     r"^Scene '(?P<scene>.*)' \| (?P<counts>.*?) \| active (?P<active>.*?) \| selected (?P<selected>.*?) \| mode (?P<mode>\S+)"
 )
@@ -56,7 +59,7 @@ def mcp_server_command(settings: dict, host: str, port: int) -> dict:
     if server_dir and exe.is_file():
         return {"command": str(exe), "args": [], "env": env}
     uv = shutil.which("uv") or "uv"
-    return {"command": uv, "args": ["run", "--directory", server_dir, "roxy-blender-mcp"], "env": env}
+    return {"command": uv, "args": ["run", "--no-sync", "--directory", server_dir, "roxy-blender-mcp"], "env": env}
 
 
 def parse_scene_header(text: str) -> dict:
@@ -113,7 +116,10 @@ class BlenderMonitor:
             "updated_at": 0,
         }
         self._readonly_tools: set[str] = set()
-        self._refreshing = False
+        self._refresh_lock = asyncio.Lock()
+        self._scene_version: int | None = None
+        self._scene_state_available = False
+        self._scene_state_supported = False
         self._last_refresh = 0.0
 
     # Lifecycle ---------------------------------------------------------------
@@ -184,6 +190,9 @@ class BlenderMonitor:
                             t.name for t in tools.tools if t.annotations and t.annotations.readOnlyHint
                         }
                         self._session = session
+                        self._scene_version = None
+                        self._scene_state_available = any(t.name == "scene_state" for t in tools.tools)
+                        self._scene_state_supported = False
                         self._ready.set()
                         backoff = 2.0
                         await self._set(
@@ -199,7 +208,7 @@ class BlenderMonitor:
                                 for t in tools.tools
                             ],
                         )
-                        asyncio.create_task(self.refresh(preview=False))
+                        await self.refresh(preview=False)
                         await self._stop.wait()
             except asyncio.CancelledError:
                 raise
@@ -216,19 +225,20 @@ class BlenderMonitor:
             backoff = min(backoff * 2, 60)
 
     async def _probe_loop(self) -> None:
-        """Cheap TCP check of the addon socket; MCP calls only when the state changes."""
+        """Check connectivity and poll the shared Blender version without overlapping refreshes."""
         while not self._stop.is_set():
             ok = await self._tcp_alive()
             current = self.state["blender"]
             if not ok:
                 if current != "disconnected":
                     await self._set(blender="disconnected")
-            elif self._ready.is_set() and not self._refreshing and (
-                current in ("disconnected", "unknown")
-                or (current == "unresponsive" and time.time() - self._last_refresh > RECHECK_UNRESPONSIVE)
-            ):
-                # The socket is up; only a real command tells whether Blender answers.
-                asyncio.create_task(self.refresh(preview=False))
+            elif self._ready.is_set() and not self._refresh_lock.locked():
+                if current in ("disconnected", "unknown") or (
+                    current == "unresponsive" and time.time() - self._last_refresh > RECHECK_UNRESPONSIVE
+                ):
+                    await self.refresh(preview=False)
+                elif current == "connected":
+                    await self._poll_scene_state()
             await asyncio.sleep(PROBE_INTERVAL)
 
     async def _tcp_alive(self) -> bool:
@@ -269,45 +279,107 @@ class BlenderMonitor:
 
     async def refresh(self, preview: bool = True) -> dict:
         """Addon status + scene facts (+ a viewport capture)."""
-        errors = []
-        self._refreshing = True
-        self._last_refresh = time.time()
-        try:
-            res = await self.call("get_addon_status", {}, timeout=STATUS_TIMEOUT)
-            text = self._text(res)
-            if res.isError or "could not connect" in text.lower():
-                await self._set(blender="disconnected", addon={"text": text})
-            else:
-                await self._set(blender="connected", addon={"text": text})
-        except asyncio.TimeoutError:
-            await self._set(blender="unresponsive", addon={"text": UNRESPONSIVE_MSG})
-            errors.append(UNRESPONSIVE_MSG)
-        except Exception as e:
-            errors.append(str(e))
-        finally:
-            self._refreshing = False
-        if self.state["blender"] == "connected":
+        async with self._refresh_lock:
+            errors = []
+            self._last_refresh = time.time()
             try:
-                await self.scene_info()
+                res = await self.call("get_addon_status", {}, timeout=STATUS_TIMEOUT)
+                text = self._text(res)
+                if "応答しません" in text:
+                    await self._set(blender="unresponsive", addon={"text": text}, error="")
+                    errors.append(text)
+                elif res.isError or text.lower().startswith("error") or "could not connect" in text.lower():
+                    await self._set(blender="disconnected", addon={"text": text}, error=text)
+                    errors.append(text)
+                else:
+                    try:
+                        status = json.loads(text)
+                    except json.JSONDecodeError:
+                        await self._set(blender="disconnected")
+                        raise RuntimeError(text or "Blenderの接続状態を読み取れませんでした。")
+                    if not isinstance(status, dict) or status.get("source") == "error":
+                        await self._set(blender="disconnected")
+                        raise RuntimeError(text)
+                    self._scene_state_supported = (
+                        self._scene_state_available and "get_scene_state" in (status.get("capabilities") or [])
+                    )
+                    await self._set(blender="connected", addon={"text": text},
+                                    error=ADDON_UPDATE_MSG if self._scene_state_available and not self._scene_state_supported else "")
+                    scene_state = await self._read_scene_state() if self._scene_state_supported else None
+                    await self._refresh_scene(scene_state, preview)
+            except asyncio.TimeoutError:
+                await self._set(blender="unresponsive", addon={"text": UNRESPONSIVE_MSG}, error="")
+                errors.append(UNRESPONSIVE_MSG)
             except Exception as e:
                 errors.append(str(e))
-            if preview:
-                try:
-                    await self.capture_preview()
-                except Exception as e:
-                    errors.append(str(e))
-        return {"ok": not errors, "errors": errors, "state": self.public_state()}
+                await self._report_scene_error(e)
+            return {"ok": not errors, "errors": errors, "state": self.public_state()}
 
-    async def scene_info(self) -> dict:
+    async def _read_scene_state(self) -> dict:
+        res = await self.call("scene_state", {"since": self._scene_version or 0}, timeout=SCENE_STATE_TIMEOUT)
+        if res.isError:
+            raise RuntimeError(self._text(res) or "scene_state failed")
+        state = res.structuredContent
+        if not isinstance(state, dict) or type(state.get("version")) is not int:
+            raise RuntimeError("シーン変更の検知結果を読み取れませんでした。")
+        return state
+
+    async def _refresh_scene(self, scene_state: dict | None, preview: bool, auto: bool = False) -> None:
+        await self.scene_info(scene_state)
+        if preview:
+            await self.capture_preview(auto=auto)
+        if scene_state is not None:
+            self._scene_version = scene_state["version"]
+            if self.state["error"]:
+                await self._set(error="")
+
+    async def _poll_scene_state(self) -> None:
+        if not self._scene_state_supported or self._refresh_lock.locked():
+            return
+        async with self._refresh_lock:
+            try:
+                scene_state = await self._read_scene_state()
+                auto_preview = self._settings.get()["mcp"].get("auto_preview", True)
+                scene = self.state["scene"]
+                if (self._scene_version is None or scene_state["version"] != self._scene_version
+                        or (scene is not None and any(scene.get(key) != scene_state[key]
+                                                     for key in ("scene", "mode", "active", "selected_count")))
+                        or (auto_preview and self.state["preview"] is None)):
+                    await self._refresh_scene(scene_state, preview=auto_preview, auto=True)
+                elif self.state["scene"] is not None:
+                    metadata = {key: scene_state[key] for key in
+                                ("version", "file", "is_dirty", "scene", "mode", "active", "selected_count")}
+                    if any(self.state["scene"].get(key) != value for key, value in metadata.items()):
+                        await self._set(scene={**self.state["scene"], **metadata})
+            except Exception as e:
+                await self._report_scene_error(e)
+
+    async def _report_scene_error(self, error: Exception) -> None:
+        message = str(error)
+        if "too old" in message or "Unknown command" in message or "Unknown tool" in message:
+            self._scene_state_supported = False
+            await self._set(error=ADDON_UPDATE_MSG)
+        elif isinstance(error, asyncio.TimeoutError) or "timeout" in message.lower():
+            self._last_refresh = time.time()
+            await self._set(blender="unresponsive", addon={"text": UNRESPONSIVE_MSG}, error="")
+        else:
+            await self._set(error=message)
+
+    async def scene_info(self, scene_state: dict | None = None) -> dict:
         res = await self.call("get_scene_info", {"fields": SCENE_FIELDS + ["settings"], "limit": 40}, timeout=60)
         text = self._text(res)
         if res.isError or text.startswith("Error"):
             raise RuntimeError(text or "get_scene_info failed")
-        scene = {"text": text, **parse_scene_header(text), "at": time.time()}
+        data = res.structuredContent
+        if not isinstance(data, dict) or "scene" not in data or "objects" not in data:
+            data = parse_scene_header(text)
+        metadata = ({key: scene_state[key] for key in ("version", "file", "is_dirty", "selected_count")}
+                    if scene_state is not None else {})
+        scene = {**data, **metadata, "text": text, "at": time.time()}
         await self._set(scene=scene)
         return scene
 
-    async def capture_preview(self, auto: bool = False) -> dict | None:
+    async def capture_preview(self, auto: bool = False) -> dict:
         max_size = int(self._settings.get()["mcp"].get("preview_max_size") or 800)
         res = await self.call("viewport_capture", {"max_size": max_size, "auto": auto}, timeout=90)
         if res.isError:
@@ -318,4 +390,4 @@ class BlenderMonitor:
                 preview = {"attachment_id": att["id"], "at": time.time(), "info": res.structuredContent or {}}
                 await self._set(preview=preview)
                 return preview
-        return None
+        raise RuntimeError("ビューポート画像を取得できませんでした。")

@@ -211,7 +211,7 @@ function McpTab() {
       </Field>
       <Field label="起動コマンド（上級者向け・任意）" hint="指定すると上のフォルダ設定より優先します。引数はスペース区切り。">
         <TextSetting value={m.command} placeholder="例: uv" onSave={(v) => void save({ command: v })} />
-        <TextSetting value={m.args.join(" ")} placeholder="例: run --directory C:\path roxy-blender-mcp" onSave={(v) => void save({ args: v.trim() ? v.trim().split(/\s+/) : [] })} />
+        <TextSetting value={m.args.join(" ")} placeholder="例: run --no-sync --directory C:\path roxy-blender-mcp" onSave={(v) => void save({ args: v.trim() ? v.trim().split(/\s+/) : [] })} />
       </Field>
       <Field label="AIに渡すMCPサーバー名">
         <TextSetting value={m.server_name} onSave={(v) => void save({ server_name: v || "blender" })} />
@@ -219,7 +219,7 @@ function McpTab() {
       <Toggle checked={m.inject_into_ai} onChange={(v) => void save({ inject_into_ai: v })} label="Claude Code / Codex にこのMCP設定を渡す"
               hint="オフにすると、各CLIに設定済みのMCPサーバー（~/.claude.json, ~/.codex/config.toml）をそのまま使います。" />
       <Toggle checked={m.monitor_enabled} onChange={(v) => void save({ monitor_enabled: v })} label="GUIからMCPに接続して状態・プレビューを表示する" />
-      <Toggle checked={m.auto_preview} onChange={(v) => void save({ auto_preview: v })} label="AIがシーンを変更したらプレビューを自動更新する" />
+      <Toggle checked={m.auto_preview} onChange={(v) => void save({ auto_preview: v })} label="シーンが変更されたらプレビューを自動更新する" />
       <Field label="プレビューの最大サイズ（px）">
         <TextSetting type="number" value={m.preview_max_size} onSave={(v) => void save({ preview_max_size: Math.min(2000, Math.max(200, Number(v) || 800)) })} />
       </Field>

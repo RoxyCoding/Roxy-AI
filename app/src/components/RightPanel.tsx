@@ -34,7 +34,24 @@ export function RightPanel({ onClose, onSettings }: { onClose: () => void; onSet
   useTick(Boolean(run));
   const otherRuns = Object.values(state.runs).filter((r) => r.conversation_id !== state.currentId);
   const selected = new Set(b.scene?.selected ?? []);
-  const selectedRows = (b.scene?.rows ?? []).filter((r) => selected.has(r.split(" | ")[0]));
+  const selectedRows = b.scene?.objects
+    ? b.scene.objects.filter((o) => selected.has(o.name)).map((o) => ({
+        name: o.name,
+        text: [o.name, o.type, ...(b.scene?.columns ?? []).filter((c) => c in o.fields).map((c) => o.fields[c])].join(" | "),
+      }))
+    : (b.scene?.rows ?? []).filter((r) => selected.has(r.split(" | ")[0])).map((r) => ({ name: r, text: r }));
+  const selectedExtra = Math.max(0, (b.scene?.selected_count ?? selected.size) - selected.size);
+  const counts = b.scene?.object_counts
+    ? Object.entries(b.scene.object_counts).sort(([a], [c]) => a.localeCompare(c)).map(([kind, count]) => `${count} ${kind}`).join(", ") || "empty"
+    : b.scene?.counts;
+  const settings = b.scene?.settings;
+  const fileLine = settings ? [
+    b.scene?.file === null ? "未保存" : b.scene?.file ?? settings.file,
+    `engine ${settings.engine}`,
+    `frames ${settings.frames[0]}-${settings.frames[1]} (now ${settings.frames[2]}) at ${settings.fps} fps`,
+    settings.resolution.join("x"), `camera ${settings.camera ?? "none"}`,
+    `HDRI ${settings.world_hdri ?? "none"}`, `unit scale ${settings.unit_scale}`,
+  ].join(" | ") : b.scene?.file_line;
   const results = state.mcpResults.filter((r) => !state.currentId || r.conversation_id === state.currentId);
   const connected = b.blender === "connected" && b.mcp === "running";
 
@@ -127,21 +144,21 @@ export function RightPanel({ onClose, onSettings }: { onClose: () => void; onSet
                 <dt>アクティブ</dt>
                 <dd>{b.scene.active ?? "なし"}</dd>
                 <dt>選択</dt>
-                <dd>{b.scene.selected?.length ? b.scene.selected.join(", ") : "なし"}</dd>
+                <dd>{b.scene.selected?.length ? b.scene.selected.join(", ") : "なし"}{selectedExtra > 0 && ` ほか${selectedExtra}件`}</dd>
                 <dt>モード</dt>
                 <dd>{b.scene.mode ?? "—"}</dd>
                 <dt>内容</dt>
-                <dd>{b.scene.counts ?? "—"}</dd>
+                <dd>{counts ?? "—"}</dd>
               </dl>
               {selectedRows.length > 0 && (
                 <div className="rows">
                   <div className="muted small">{(b.scene.columns ?? []).join(" | ")}</div>
                   {selectedRows.map((r) => (
-                    <div key={r} className="row-line">{r}</div>
+                    <div key={r.name} className="row-line">{r.text}</div>
                   ))}
                 </div>
               )}
-              {b.scene.file_line && <div className="muted small wrap">{b.scene.file_line}</div>}
+              {fileLine && <div className="muted small wrap">{fileLine}{b.scene.is_dirty && " | 未保存の変更あり"}</div>}
               <details>
                 <summary className="muted small">MCPの出力全文</summary>
                 <pre className="mini-pre">{b.scene.text}</pre>
