@@ -143,7 +143,7 @@ export const Composer = forwardRef<ComposerHandle>(function Composer(_, ref) {
           ref={textarea}
           value={text}
           rows={1}
-          placeholder={state.draftMode === "prompt" ? "作りたいものや用途、好みを相談…（参考画像も添付できます）" : "Blenderで作りたいものや、やりたいことを入力…（Shift+Enterで改行）"}
+          placeholder={state.draftMode === "prompt" ? "作りたいものや用途、好みを相談…（参考画像も添付できます）" : "Blender でのアセット制作や、UE5 でのゲーム開発でやりたいことを入力…（Shift+Enterで改行）"}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             // Never send while a Japanese IME is composing.

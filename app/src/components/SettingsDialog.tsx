@@ -6,12 +6,13 @@ import { cx, effortLabel, findModel } from "../lib/format";
 import { Icon } from "./Icons";
 import { McpRestartButton } from "./McpRestartButton";
 
-export type SettingsTab = "general" | "ai" | "mcp" | "projects" | "logs";
+export type SettingsTab = "general" | "ai" | "mcp" | "unreal" | "projects" | "logs";
 
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: "general", label: "一般" },
   { id: "ai", label: "AI" },
   { id: "mcp", label: "Blender MCP" },
+  { id: "unreal", label: "Unreal Engine" },
   { id: "projects", label: "プロジェクト" },
   { id: "logs", label: "ログ・診断" },
 ];
@@ -214,6 +215,10 @@ function ProviderCard({ p }: { p: ProviderStatus }) {
 
       {p.id === "claude" && (
         <div className="form">
+          <p className="muted small notice-inline">
+            このアプリを他の人に配布して使ってもらう場合は、Anthropic の利用規約により、claude.ai のログイン（サブスクリプション）ではなく
+            API キー方式を使ってください。配布用ビルド（scripts\build.ps1 -Distribution）では API キー方式が既定になります。
+          </p>
           <Field label="認証方式" hint="既定は Claude Code CLI 自身のログイン（ご自身のサブスクリプションまたはAPI）。APIキーは Windows 資格情報マネージャーに保存され、ファイルには書き込まれません。">
             <div className="segmented">
               <button className={cx(conf.auth_mode !== "api_key" && "on")} onClick={() => void save({ auth_mode: "cli" })}>CLIのログインを使用</button>
@@ -410,7 +415,7 @@ function ProviderCard({ p }: { p: ProviderStatus }) {
 export const FULL_ACCESS_WARNING = [
   "フルアクセスモードを有効にしますか？",
   "",
-  "・Claude Code / Codex がコマンド実行・ファイル変更・Blender操作を、確認なしで行います",
+  "・Claude / Codex がコマンド実行・ファイル変更・Blender操作を、確認なしで行います",
   "・Codex のサンドボックスも解除され、PC上のあらゆるファイルにアクセスできます",
   "・AIの質問への回答や入力フォームだけは、引き続き確認が表示されます",
   "",
@@ -449,7 +454,7 @@ function AiTab() {
   return (
     <div className="form">
       <div className="row between">
-        <p className="muted small">各AIは公式CLI（Claude Code / Codex）を通じて、ご自身のアカウントで利用します。</p>
+        <p className="muted small">各AI（Claude / Codex）は公式CLIを通じて、ご自身のアカウントで利用します。</p>
         <button className="btn small" disabled={state.providersLoading} onClick={() => void actions.refreshProviders(true)}>
           {state.providersLoading ? <span className="spinner" /> : <Icon name="refresh" size={13} />} 再確認
         </button>
@@ -457,6 +462,51 @@ function AiTab() {
       <FullAccessCard />
       {state.providers.map((p) => <ProviderCard key={p.id} p={p} />)}
       {state.providers.length === 0 && <div className="muted">確認中…</div>}
+    </div>
+  );
+}
+
+function UnrealTab() {
+  const { state, actions } = useStore();
+  const u = (state.settings as unknown as { unreal?: Record<string, unknown> }).unreal ?? {};
+  const save = (v: Record<string, unknown>) => actions.saveSettings({ unreal: v });
+  return (
+    <div className="form">
+      <p className="muted small">
+        Unreal Editor 内で動く MCP サーバー（エディタの MCP プラグイン）に接続します。ゲーム開発の操作は AI が直接この MCP を使って行い、
+        アプリは接続状態・ビューポート・選択中のアクタを表示します。Blender で作ったアセットは Blender MCP の書き出し機能で UE5 へ持ち込めます。
+      </p>
+      <div className="card">
+        <dl className="kv">
+          <dt>状態</dt><dd>{state.unreal.status}</dd>
+          <dt>レベル</dt><dd>{state.unreal.editor?.level || "—"}</dd>
+          <dt>ツールセット</dt><dd>{state.unreal.toolsets.length}</dd>
+        </dl>
+        {state.unreal.error && <div className="error-text">{state.unreal.error}</div>}
+        <button className="btn small" onClick={() => void actions.guard(() => post("/api/unreal/reconnect"))}><Icon name="refresh" size={13} /> 再接続</button>
+      </div>
+      <Toggle checked={u.enabled !== false} onChange={(v) => void save({ enabled: v })} label="Unreal Engine 連携を使う" />
+      <Field label="MCP サーバーのアドレス" hint="Unreal Editor の MCP プラグインのアドレス（既定: http://127.0.0.1:8000/mcp）">
+        <TextSetting value={String(u.url ?? "")} placeholder="http://127.0.0.1:8000/mcp" onSave={(v) => void save({ url: v.trim() || "http://127.0.0.1:8000/mcp" })} />
+      </Field>
+      <Field label="AIに渡すMCPサーバー名" hint="各CLIの設定と同じ名前にすると、ツールが重複しません">
+        <TextSetting value={String(u.server_name ?? "unreal-mcp")} onSave={(v) => void save({ server_name: v.trim() || "unreal-mcp" })} />
+      </Field>
+      <Toggle checked={u.inject_into_ai !== false} onChange={(v) => void save({ inject_into_ai: v })} label="Claude / Codex / ローカルLLM にこの MCP を渡す" />
+      <Toggle checked={u.monitor_enabled !== false} onChange={(v) => void save({ monitor_enabled: v })} label="アプリから接続して状態・プレビューを表示する" />
+      <Toggle checked={u.auto_preview !== false} onChange={(v) => void save({ auto_preview: v })} label="AI が UE を操作したらプレビューを自動更新する" />
+      <h3 className="sub">承認</h3>
+      <Toggle checked={(state.settings.approval as Record<string, unknown>).auto_approve_unreal_readonly !== false}
+              onChange={(v) => void actions.saveSettings({ approval: { auto_approve_unreal_readonly: v } })}
+              label="UE5 の読み取り操作は確認せずに実行"
+              hint="ツールセットの一覧・説明と、Get / Is / Search / Find / Capture などで始まる読み取り専用の操作が対象です。選択の変更やスクリプト実行は含みません。" />
+      <Toggle checked={Boolean((state.settings.approval as Record<string, unknown>).auto_approve_unreal_mcp)}
+              onChange={(v) => {
+                if (v && !window.confirm("UE5 MCP のフルアクセスを有効にしますか？\n\nAI が UE5 のレベル・アセット・ブループリントの作成、変更、削除やプレイ開始を、確認なしで行います。\n重要なプロジェクトはソース管理やバックアップを取ってから使ってください。")) return;
+                void actions.saveSettings({ approval: { auto_approve_unreal_mcp: v } });
+              }}
+              label="UE5 MCP のツールはすべて確認せずに実行（UE5 フルアクセス）"
+              hint="UE5 の操作だけを自動承認します。コマンド実行やファイル変更まで含めて承認を省く場合は、設定 → AI の「フルアクセスモード」を使います。" />
     </div>
   );
 }
@@ -489,7 +539,7 @@ function McpTab() {
       <Field label="AIに渡すMCPサーバー名">
         <TextSetting value={m.server_name} onSave={(v) => void save({ server_name: v || "blender" })} />
       </Field>
-      <Toggle checked={m.inject_into_ai} onChange={(v) => void save({ inject_into_ai: v })} label="Claude Code / Codex にこのMCP設定を渡す"
+      <Toggle checked={m.inject_into_ai} onChange={(v) => void save({ inject_into_ai: v })} label="Claude / Codex にこのMCP設定を渡す"
               hint="オフにすると、各CLIに設定済みのMCPサーバー（~/.claude.json, ~/.codex/config.toml）をそのまま使います。" />
       <Toggle checked={m.monitor_enabled} onChange={(v) => void save({ monitor_enabled: v })} label="GUIからMCPに接続して状態・プレビューを表示する" />
       <Toggle checked={m.auto_preview} onChange={(v) => void save({ auto_preview: v })} label="シーンが変更されたらプレビューを自動更新する" />
@@ -632,6 +682,7 @@ export function SettingsDialog({ initialTab, onClose, exiting = false }: { initi
           {tab === "general" && <General />}
           {tab === "ai" && <AiTab />}
           {tab === "mcp" && <McpTab />}
+          {tab === "unreal" && <UnrealTab />}
           {tab === "projects" && <ProjectsTab />}
           {tab === "logs" && <LogsTab />}
         </div>

@@ -37,6 +37,7 @@ class UsageInfo:
     windows: list[UsageWindow] = field(default_factory=list)
     note: str = ""  # e.g. "APIキー利用のため利用枠はありません"
     extra: str = ""  # e.g. available reset credits
+    raw: str = ""  # the CLI's own text when it could not be parsed (shown as-is)
     fetched_at: float = field(default_factory=time.time)
 
     def public(self) -> dict:
@@ -120,8 +121,13 @@ def claude_usage_from_text(text: str, now: datetime | None = None) -> UsageInfo:
         info.windows.append(UsageWindow(key, label, float(m["pct"]), parse_reset(reset, now) if reset else None,
                                         reset if reset and parse_reset(reset, now) is None else ""))
     if not info.windows:
-        info.note = ("利用枠の情報がありません（APIキー利用の場合は利用枠ではなく従量課金です）"
-                     if "api" in (text or "").lower() else "利用枠の情報を取得できませんでした")
+        lowered = (text or "").lower()
+        if "api" in lowered and "%" not in lowered:
+            info.note = "利用枠の情報がありません（APIキー利用の場合は利用枠ではなく従量課金です）"
+        else:
+            # The /usage wording may change with Claude Code updates; show it unparsed instead.
+            info.note = "利用枠の表示形式を読み取れなかったため、Claude Code の表示をそのまま示します"
+            info.raw = "\n".join(line for line in (text or "").splitlines()[:12] if line.strip())
     return info
 
 

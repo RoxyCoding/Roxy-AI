@@ -109,7 +109,7 @@ class BlenderMonitor:
         self._port = 9876
         self.state: dict[str, Any] = {
             "mcp": "stopped",  # stopped | starting | running | error
-            "blender": "unknown",  # unknown | connected | disconnected | unresponsive
+            "blender": "unknown",  # unknown | connected | disconnected | unresponsive | port_conflict
             "endpoint": "",
             "error": "",
             "server": {},
@@ -164,6 +164,28 @@ class BlenderMonitor:
         self.state.update(changes)
         self.state["updated_at"] = time.time()
         await self._publish({"type": "blender.state", "state": self.public_state()})
+        if changes.get("blender") == "unresponsive":
+            self._schedule_port_diagnosis()
+
+    def _schedule_port_diagnosis(self) -> None:
+        """Silence is usually another server on the same port; find out which (rate-limited)."""
+        now = time.time()
+        if now - getattr(self, "_last_diagnosis", 0.0) < 30:
+            return
+        self._last_diagnosis = now
+
+        async def run() -> None:
+            from .port_diagnosis import diagnose
+
+            try:
+                found = await diagnose("127.0.0.1" if self._host == "localhost" else self._host, self._port)
+            except Exception as e:
+                logger.debug("port diagnosis failed: %s", e)
+                return
+            if found and self.state.get("blender") == "unresponsive":
+                await self._set(blender="port_conflict", addon={"text": found["message"]}, error="")
+
+        asyncio.create_task(run())
 
     def public_state(self) -> dict:
         return dict(self.state)
@@ -238,7 +260,7 @@ class BlenderMonitor:
                     await self._set(blender="disconnected")
             elif self._ready.is_set() and not self._refresh_lock.locked():
                 if current in ("disconnected", "unknown") or (
-                    current == "unresponsive" and time.time() - self._last_refresh > RECHECK_UNRESPONSIVE
+                    current in ("unresponsive", "port_conflict") and time.time() - self._last_refresh > RECHECK_UNRESPONSIVE
                 ):
                     await self.refresh(preview=False)
                 elif current == "connected":

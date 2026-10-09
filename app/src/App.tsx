@@ -124,7 +124,7 @@ export default function App() {
       <div className="splash">
         <div className="splash-card">
           <img className="brand-icon pulse" src="/roxy-icon.png" alt="Roxy" />
-          <p className="muted">Roxy Blender AI を起動しています…</p>
+          <p className="muted">Roxy AI を起動しています…</p>
         </div>
       </div>
     );

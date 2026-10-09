@@ -1,4 +1,4 @@
-"""Roxy Blender AI backend.
+"""Roxy AI backend.
 
 The backend sits between the desktop GUI and the AI CLIs (Claude Code, Codex).
 Blender itself is only ever operated through Roxy-BlenderMCP-v2: the AIs call

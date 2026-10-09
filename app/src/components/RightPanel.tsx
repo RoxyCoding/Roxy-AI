@@ -1,8 +1,10 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { fileUrl, post } from "../lib/backend";
 import { useStore } from "../lib/store";
 import { clockTime, cx, relativeTime, seconds } from "../lib/format";
 import { Icon } from "./Icons";
+import { Section } from "./PanelSection";
+import { SendToUnreal, UnrealSections, unrealBadge } from "./UnrealSections";
 import { useLightbox } from "./Lightbox";
 import { McpRestartButton } from "./McpRestartButton";
 import { ToolCallRow } from "./ToolCalls";
@@ -10,24 +12,24 @@ import { blenderBadge } from "./TopBar";
 import type { SettingsTab } from "./SettingsDialog";
 import { useTick } from "./ChatView";
 
-function Section({ title, children, right, defaultOpen = true }: { title: string; children: ReactNode; right?: ReactNode; defaultOpen?: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <section className="panel-section">
-      <div className="panel-section-head">
-        <button className="link-btn strong" onClick={() => setOpen((v) => !v)}>
-          <Icon name={open ? "down" : "chevron"} size={12} /> {title}
-        </button>
-        {right}
-      </div>
-      {open && <div className="panel-section-body">{children}</div>}
-    </section>
-  );
-}
-
 export function RightPanel({ onClose, onSettings, exiting = false }: { onClose: () => void; onSettings: (tab: SettingsTab) => void; exiting?: boolean }) {
   const { state, actions } = useStore();
   const b = state.blender;
+  const [engine, setEngineState] = useState<"blender" | "unreal">(() => {
+    try {
+      return localStorage.getItem("roxy.rpanel.engine") === "unreal" ? "unreal" : "blender";
+    } catch {
+      return "blender";
+    }
+  });
+  const setEngine = (v: "blender" | "unreal") => {
+    setEngineState(v);
+    try {
+      localStorage.setItem("roxy.rpanel.engine", v);
+    } catch {
+      /* per-viewer convenience only */
+    }
+  };
   const badge = blenderBadge(b);
   const lightbox = useLightbox();
   const [busy, setBusy] = useState<"" | "preview" | "info" | "reconnect">("");
@@ -69,12 +71,22 @@ export function RightPanel({ onClose, onSettings, exiting = false }: { onClose: 
   return (
     <aside className={cx("rpanel", exiting && "slide-out")} inert={exiting}>
       <div className="rpanel-head">
-        <span className="strong">Blender</span>
+        <div className="segmented engine-tabs" role="tablist" aria-label="エンジン">
+          <button role="tab" aria-selected={engine === "blender"} className={cx(engine === "blender" && "on")} onClick={() => setEngine("blender")}>
+            <span className={cx("dot", blenderBadge(b).cls)} /> Blender
+          </button>
+          <button role="tab" aria-selected={engine === "unreal"} className={cx(engine === "unreal" && "on")} onClick={() => setEngine("unreal")}>
+            <span className={cx("dot", unrealBadge(state.unreal).cls)} /> UE5
+          </button>
+        </div>
         <button className="icon-btn" title="閉じる" onClick={onClose}>
           <Icon name="x" />
         </button>
       </div>
       <div className="rpanel-scroll">
+        {engine === "unreal" && <UnrealSections onSettings={onSettings} />}
+        {engine === "blender" && (
+          <>
         <Section
           title="接続状況"
           right={
@@ -95,7 +107,7 @@ export function RightPanel({ onClose, onSettings, exiting = false }: { onClose: 
           <McpRestartButton />
           {b.error && <div className="error-text">{b.error}</div>}
           {b.addon?.text && b.blender === "connected" && <pre className="mini-pre">{b.addon.text}</pre>}
-          {b.blender === "unresponsive" && <p className="error-text">{b.addon?.text}</p>}
+          {(b.blender === "unresponsive" || b.blender === "port_conflict") && <p className="error-text">{b.addon?.text}</p>}
           {b.blender === "disconnected" && b.mcp === "running" && (
             <p className="muted small">Blenderの3Dビューで N キー →「Roxy Blender MCP」タブから接続してください。</p>
           )}
@@ -161,6 +173,7 @@ export function RightPanel({ onClose, onSettings, exiting = false }: { onClose: 
                 </div>
               )}
               {fileLine && <div className="muted small wrap">{fileLine}{b.scene.is_dirty && " | 未保存の変更あり"}</div>}
+              <SendToUnreal />
               <details>
                 <summary className="muted small">MCPの出力全文</summary>
                 <pre className="mini-pre">{b.scene.text}</pre>
@@ -171,6 +184,9 @@ export function RightPanel({ onClose, onSettings, exiting = false }: { onClose: 
             <div className="muted small">{connected ? "更新ボタンでシーン情報を取得します" : "Blender接続後に表示できます"}</div>
           )}
         </Section>
+
+          </>
+        )}
 
         <Section title="AIの作業進捗">
           {run ? (
@@ -197,12 +213,13 @@ export function RightPanel({ onClose, onSettings, exiting = false }: { onClose: 
         </Section>
 
         <Section title={`MCPの結果${results.length ? `（${results.length}）` : ""}`}>
-          {results.length === 0 && <div className="muted small">AIがBlender MCPのツールを使うと、結果がここに表示されます</div>}
+          {results.length === 0 && <div className="muted small">AIが Blender / UE5 の MCP ツールを使うと、結果がここに表示されます</div>}
           {results.slice(0, 10).map((tc) => (
             <ToolCallRow key={tc.id} tc={tc} defaultOpen={tc === results[0] && tc.images.length > 0} />
           ))}
         </Section>
 
+        {engine === "blender" && (
         <Section title={`MCPツール（${b.tools.length}）`} defaultOpen={false}>
           {b.tools.length === 0 && <div className="muted small">MCPサーバー未接続</div>}
           <ul className="tool-list">
@@ -215,6 +232,7 @@ export function RightPanel({ onClose, onSettings, exiting = false }: { onClose: 
             ))}
           </ul>
         </Section>
+        )}
       </div>
     </aside>
   );

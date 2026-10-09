@@ -18,6 +18,7 @@ interface UsageInfo {
   windows: UsageWindow[];
   note: string;
   extra: string;
+  raw?: string;
   fetched_at: number;
 }
 
@@ -124,6 +125,7 @@ export function UsageBadge() {
                 );
               })}
               {u.note && <div className="muted small">{u.note}</div>}
+              {u.raw && <pre className="mini-pre usage-raw">{u.raw}</pre>}
               {u.extra && <div className="muted small">{u.extra}</div>}
             </div>
           ))}

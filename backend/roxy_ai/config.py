@@ -12,6 +12,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# The data folder keeps its original name so existing chats, settings and downloaded
+# models stay where they are after the app was renamed to "Roxy AI".
 APP_NAME = "RoxyBlenderAI"
 KEYRING_SERVICE = "RoxyBlenderAI"
 
@@ -97,6 +99,11 @@ def _default_mcp_dir() -> str:
     return ""
 
 
+try:  # written by scripts/build.ps1 for frozen builds only
+    from ._build_flags import DISTRIBUTION  # type: ignore[import-not-found]
+except ImportError:
+    DISTRIBUTION = False
+
 DEFAULT_SETTINGS: dict[str, Any] = {
     "theme": "system",  # system | light | dark
     "default_provider": "claude",
@@ -106,7 +113,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "cli_path": "",  # empty: `claude` on PATH, else the SDK's bundled CLI
             "default_model": "default",
             "default_effort": "",  # empty: the model's own default
-            "auth_mode": "cli",  # cli: the CLI's own login (subscription or env) | api_key
+            # cli: the CLI's own login (subscription or env) | api_key. Builds made for other people
+            # default to api_key: Anthropic does not permit offering claude.ai login in third-party apps.
+            "auth_mode": "api_key" if DISTRIBUTION else "cli",
             "permission_mode": "default",
         },
         "codex": {
@@ -149,10 +158,23 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "preview_max_size": 800,
         "monitor_enabled": True,
     },
+    # Unreal Engine 5: the editor's MCP server (HTTP, runs inside Unreal Editor).
+    "unreal": {
+        "enabled": True,
+        "url": "http://127.0.0.1:8000/mcp",
+        # Same name as the user's own CLI configs use, so injecting does not duplicate it.
+        "server_name": "unreal-mcp",
+        "inject_into_ai": True,
+        "monitor_enabled": True,
+        "auto_preview": True,
+    },
     "approval": {
         # Tools the MCP marks readOnlyHint never change the scene.
         "auto_approve_readonly_mcp": True,
         "auto_approve_blender_mcp": False,
+        # UE5 MCP: read-only calls (Get*/Is*/Capture* ...) run without asking; full = everything.
+        "auto_approve_unreal_readonly": True,
+        "auto_approve_unreal_mcp": False,
         # Full access: the AIs run without approvals or sandbox (Claude bypassPermissions,
         # Codex approval "never" + danger-full-access). Off unless the user turns it on.
         "full_access": False,

@@ -1,7 +1,7 @@
-# Roxy Blender AI
+# Roxy AI
 
-Blender 専用の AI チャットデスクトップアプリです。Claude Code と OpenAI Codex を切り替えながら、
-自然言語で Blender を操作できます。
+Blender と Unreal Engine 5 のための AI チャットデスクトップアプリです。Claude・OpenAI Codex・ローカルLLM を切り替えながら、
+自然言語で Blender でのアセット制作と UE5 でのゲーム開発を行えます。（Claude は Claude Code CLI を通じて利用します）
 
 **このアプリは AI チャット GUI です。** モデリング・マテリアル・UV・リギング・Geometry Nodes・
 UE5 書き出し・Guide 管理などの Blender 制作機能はすべて
@@ -77,6 +77,23 @@ Codex のスレッド）は別に記録します。
 > 本アプリはご自身の PC 上で、ご自身がログインした CLI を使う個人用ツールとして設計しています。
 > **他の人に配布・提供する場合は、Claude 側は API キーモードを使用してください。**
 
+### Unreal Engine 5（ゲーム開発）
+
+Blender に加えて、Unreal Editor 内で動く MCP サーバー（既定 `http://127.0.0.1:8000/mcp`、エディタの MCP プラグイン）にも対応しています。
+
+- Claude Code / Codex / ローカルLLM に UE の MCP（名前 `unreal-mcp`、各CLIの既存設定と同名なので重複しません）を渡し、
+  AI が `list_toolsets` → `describe_toolset` → `call_tool` でレベル・アクタ・ブループリント・マテリアル・PIE などを操作します
+- アプリは UE MCP の `EditorToolset.EditorAppToolset` の読み取り系ツール（`GetSelectedActors` / `IsPIERunning` /
+  `GetCameraTransform` / `CaptureViewport`）だけを使い、右パネルの「UE5」タブに接続状態・ビューポート・レベル・選択アクタを表示します
+- エディタ未起動時は「UE5未起動」と表示し、起動すると自動で接続します
+- 同じ Unreal Editor に対して同時に AI を実行できるのは 1 会話だけです（競合防止）
+- Blender で作ったアセットの UE5 への持ち込みは、Blender MCP の書き出し機能を使います
+- 設定 → Unreal Engine でアドレス・有効/無効・AIへの受け渡し・自動プレビューを変更できます
+- 右パネル Blender タブの「UE5へ送る」：選択中のオブジェクトを、Blender MCP の `export_to_unreal`（書き出し → UE MCP でインポート →
+  `verify` でサイズ確認 → レベルに配置）の手順で UE5 に持ち込むよう AI に依頼します（処理は各 MCP が行い、アプリは依頼文を送るだけ）
+- Blender のポートが応答しないとき、同じポートを使う別のアプリ／Blender アドオン（Blender 公式の「MCP」拡張など）を自動で調べ、
+  「ポート競合」として原因と対処を表示します
+
 ### ローカルLLM（LM Studio などは不要）
 
 上部バーの「ローカルLLM」で、PC上のモデルを使えます。外部への送信はなく、ログインも不要です。
@@ -111,6 +128,9 @@ AI の権限確認は迂回しません。Claude Code の権限要求・`AskUser
 「モデリングプロンプト」チャットには適用されません。
 
 既定では、MCP が `readOnlyHint` を宣言したツールだけ自動承認します（設定で変更可）。
+UE5 の MCP は読み取り専用の宣言がないため、ツール名で判定します（`Get` / `Is` / `Search` / `Find` / `Capture` などで始まる操作、
+ツールセットの一覧・説明は自動承認。選択変更やスクリプト実行は確認あり）。設定 → Unreal Engine で、読み取りの自動承認と、
+UE5 のツールをすべて自動承認する「UE5 フルアクセス」を切り替えられます。
 
 ### セキュリティ
 
@@ -163,8 +183,52 @@ powershell -ExecutionPolicy Bypass -File scripts\dev-browser.ps1
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1
-# → app\src-tauri\target\release\bundle\nsis\Roxy Blender AI_0.1.0_x64-setup.exe
+# → app\src-tauri\target\release\bundle\nsis\Roxy AI_0.1.0_x64-setup.exe
 ```
 
 バックエンドは PyInstaller で単体 exe（Tauri サイドカー）になります。Claude Agent SDK 同梱の CLI
 （約 250MB）は含めず、PC にインストール済みの Claude Code CLI を使います。
+
+#### 他の人に配布する場合
+
+```powershell
+$env:ROXY_SIGN_THUMBPRINT = "<コード署名証明書の拇印>"   # 任意（署名しない場合は省略）
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Distribution
+```
+
+- `-Distribution`：Claude の認証方式の既定を **API キー方式** にします。Anthropic は第三者アプリで claude.ai のログイン
+  （サブスクリプション）を提供することを認めていないため、配布版の利用者には各自の API キーを使ってもらいます
+- `ROXY_SIGN_THUMBPRINT`：Windows 証明書ストアにあるコード署名証明書の拇印を指定すると、バックエンド・アプリ本体・
+  インストーラーに署名とタイムスタンプを付けます（Windows SDK の `signtool` が必要）。署名なしだと SmartScreen が警告を出します
+- タイムスタンプサーバーは `ROXY_SIGN_TIMESTAMP` で変更できます（既定 `http://timestamp.digicert.com`）
+
+#### コード署名（SignPath Foundation）
+
+配布用インストーラーは GitHub Actions（`.github/workflows/release.yml`）でビルドし、
+[SignPath Foundation](https://signpath.org) の無償コード署名で署名します。
+SignPath の設定（シークレット `SIGNPATH_API_TOKEN`、変数 `SIGNPATH_ORGANIZATION_ID` / `SIGNPATH_PROJECT_SLUG` /
+`SIGNPATH_SIGNING_POLICY`）が無い間は、未署名のインストーラーを成果物としてアップロードします。
+`v0.1.0` のようなタグを push すると、インストーラー付きのリリース（下書き）を作成します。
+
+## コード署名ポリシー
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+- 署名対象は、このリポジトリのソースから GitHub Actions でビルドした成果物だけです
+- コミッター・レビュアー・承認者：[RoxyCoding](https://github.com/RoxyCoding)（リポジトリのオーナー）
+- 署名リクエストは、リリースごとにオーナーが手動で承認します
+
+## プライバシー
+
+このプログラムは、利用者が設定で選んだ AI サービス（Anthropic の Claude、OpenAI の Codex）と、
+利用者が指定したモデルのダウンロード元（ollama.com、Hugging Face）以外に情報を送信しません。
+送信は、利用者がメッセージを送ったとき、またはモデルのダウンロードを開始したときだけ行います。
+ローカルLLM を選んだ場合、会話は PC の外へ送信されません。
+各サービスでのデータの扱いは、それぞれのプライバシーポリシーに従います。
+会話・設定・添付ファイルは PC 内（`%APPDATA%` 配下）にだけ保存され、作者へは何も送信されません。
+
+## ライセンス
+
+[GNU Affero General Public License v3.0](LICENSE)（AGPL-3.0）。ロゴとアイコン（`Asset/`、`app/public/`、
+`app/src-tauri/icons/`）も同じライセンスです。改変版を配布する場合や、ネットワーク越しに利用させる場合は、
+その改変版のソースコードも AGPL-3.0 で公開する必要があります。

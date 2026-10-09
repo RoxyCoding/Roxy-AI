@@ -43,3 +43,10 @@ def test_codex_usage():
     assert [(w.label, w.used_percent, w.resets_at) for w in info.windows] == [
         ("5時間枠", 17.0, 1791530379), ("1週間", 30.0, 1791948814)]
     assert "2" in info.extra
+
+
+def test_unparsed_usage_text_is_kept():
+    info = claude_usage_from_text("Session usage: 40 percent (new format)\nWeekly: 12 percent")
+    assert info.windows == [] and "Session usage" in info.raw and "そのまま" in info.note
+    api = claude_usage_from_text("Usage is billed to your API key")
+    assert api.raw == "" and "APIキー" in api.note

@@ -144,7 +144,7 @@ export interface ProviderStatus {
 
 export interface BlenderState {
   mcp: "stopped" | "starting" | "running" | "error";
-  blender: "unknown" | "connected" | "disconnected" | "unresponsive";
+  blender: "unknown" | "connected" | "disconnected" | "unresponsive" | "port_conflict";
   endpoint: string;
   error: string;
   server: { name?: string; version?: string };
@@ -216,6 +216,7 @@ export interface Bootstrap {
   active_project_id: string;
   providers: { id: ProviderId; name: string }[];
   blender: BlenderState;
+  unreal?: UnrealState;
   runs: RunSnapshot[];
   data_dir: string;
 }
@@ -237,7 +238,8 @@ export interface SearchHit {
 }
 
 export type ServerEvent =
-  | { type: "hello"; blender: BlenderState; runs: RunSnapshot[] }
+  | { type: "hello"; blender: BlenderState; unreal?: UnrealState; runs: RunSnapshot[] }
+  | { type: "unreal.state"; state: UnrealState }
   | { type: "pong" }
   | { type: "blender.state"; state: BlenderState }
   | { type: "blender.tool_result"; conversation_id: string; tool_call: ToolCall }
@@ -255,3 +257,14 @@ export type ServerEvent =
   | { type: "run.finished"; conversation_id: string; run_id: string; status: string; error: string }
   | { type: "approval.request"; approval: Approval }
   | { type: "approval.resolved"; id: string; conversation_id: string };
+
+/** Unreal Editor MCP connection, as reported by backend/roxy_ai/unreal_monitor.py. */
+export interface UnrealState {
+  status: "disabled" | "waiting" | "connecting" | "connected" | "error";
+  url: string;
+  error: string;
+  toolsets: string[];
+  editor: null | { level: string; selected: string[]; selected_paths: string[]; pie: boolean; at: number };
+  preview: null | { attachment_id: string; at: number };
+  updated_at: number;
+}

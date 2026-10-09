@@ -32,6 +32,7 @@ from .config import Paths, Secrets, SettingsStore
 from .db import Database
 from .logs import op, tail
 from .mcp_monitor import BlenderMonitor
+from .unreal_monitor import UnrealMonitor
 from .model_download import DownloadManager
 from .path_dialog import select_path
 
@@ -77,8 +78,10 @@ class State:
             return att
 
         self.monitor = BlenderMonitor(self.settings, paths.logs, self.hub.publish, save_image)
+        self.unreal = UnrealMonitor(self.settings, self.hub.publish, save_image)
         self.chat = ChatService(self.db, self.settings, paths, self.adapters, self.attachments, self.monitor,
                                 self.hub.publish)
+        self.chat.unreal = self.unreal
 
     def _prune_previews(self, keep_id: str, keep: int = 5) -> None:
         rows = [r for r in self.db._all("SELECT * FROM attachments WHERE kind='preview' ORDER BY created_at DESC")]
@@ -194,6 +197,7 @@ def create_app(paths: Paths, token: str, port: int = 0) -> FastAPI:
             state.attachments.delete(row["id"])
         project = state.active_project()
         await state.monitor.start(project["blender_host"], project["blender_port"])
+        await state.unreal.start()
         op("app.start", version=__version__)
         yield
         op("app.stop")
@@ -206,9 +210,10 @@ def create_app(paths: Paths, token: str, port: int = 0) -> FastAPI:
             except Exception as e:
                 logger.warning("adapter shutdown: %s", e)
         await state.monitor.stop()
+        await state.unreal.stop()
         state.db.close()
 
-    app = FastAPI(title="Roxy Blender AI backend", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="Roxy AI backend", version=__version__, lifespan=lifespan)
     app.state.roxy = state
     local = state.adapters.get("local")
     if local is not None and hasattr(local, "proxy"):
@@ -288,6 +293,7 @@ def create_app(paths: Paths, token: str, port: int = 0) -> FastAPI:
             "active_project_id": project["id"],
             "providers": [{"id": a.id, "name": a.name} for a in state.adapters.values()],
             "blender": state.monitor.public_state(),
+            "unreal": state.unreal.public_state(),
             "runs": state.chat.active_runs(),
             "data_dir": str(paths.root),
         }
@@ -301,6 +307,8 @@ def create_app(paths: Paths, token: str, port: int = 0) -> FastAPI:
         patch.pop("last_project_id", None)
         before = state.settings.get()
         after = state.settings.update(patch)
+        if before.get("unreal") != after.get("unreal"):
+            await state.unreal.start()
         if before["mcp"] != after["mcp"]:
             project = state.active_project()
             await state.monitor.start(project["blender_host"], project["blender_port"])
@@ -315,6 +323,19 @@ def create_app(paths: Paths, token: str, port: int = 0) -> FastAPI:
         return after
 
     # Providers -------------------------------------------------------------------------
+
+    @app.get("/api/unreal/state")
+    async def unreal_state():
+        return state.unreal.public_state()
+
+    @app.post("/api/unreal/refresh")
+    async def unreal_refresh(body: RefreshBody):
+        return await state.unreal.refresh(preview=body.preview)
+
+    @app.post("/api/unreal/reconnect")
+    async def unreal_reconnect():
+        await state.unreal.start()
+        return state.unreal.public_state()
 
     @app.get("/api/usage")
     async def usage(refresh: bool = False):
@@ -596,6 +617,7 @@ def create_app(paths: Paths, token: str, port: int = 0) -> FastAPI:
         queue: asyncio.Queue = asyncio.Queue(maxsize=10000)
         state.hub.clients.add(queue)
         await socket.send_json({"type": "hello", "blender": state.monitor.public_state(),
+                                "unreal": state.unreal.public_state(),
                                 "runs": state.chat.active_runs()})
 
         async def pump():

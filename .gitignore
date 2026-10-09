@@ -1,5 +1,7 @@
 backend/.venv/
 backend/build/
+backend/roxy_ai/_build_flags.py
+app/src-tauri/tauri.signing.conf.json
 **/__pycache__/
 *.egg-info/
 app/node_modules/

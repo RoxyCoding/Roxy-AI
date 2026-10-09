@@ -79,7 +79,7 @@ def test_plan_context_up_to_date_session_needs_nothing():
 
 def test_render_handoff_labels_and_truncates():
     text = render_handoff(_msgs()[:4], fresh=True)
-    assert "AI（Codex）" in text and "AI（Claude Code）" in text and "blender.look" in text
+    assert "AI（Codex）" in text and "AI（Claude）" in text and "blender.look" in text
     assert "内部のセッションは引き継がれていません" in text or "引き継がれていません" in text
     short = render_handoff(_msgs()[:4], fresh=True, max_chars=20)
     assert "省略" in short

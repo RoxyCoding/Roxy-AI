@@ -84,7 +84,7 @@ class AppServer:
         self._reader = asyncio.create_task(self._read_loop())
         init = await self.request(
             "initialize",
-            {"clientInfo": {"name": "roxy_blender_ai", "title": "Roxy Blender AI", "version": __version__}},
+            {"clientInfo": {"name": "roxy_blender_ai", "title": "Roxy AI", "version": __version__}},
             timeout=60,
         )
         await self._send({"method": "initialized"})

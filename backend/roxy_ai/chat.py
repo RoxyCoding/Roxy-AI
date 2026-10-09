@@ -34,6 +34,7 @@ from .context import PROVIDER_NAMES, plan_context, render_handoff
 from .db import Database, new_id
 from .logs import op
 from .mcp_monitor import BlenderMonitor, mcp_server_command
+from .unreal_monitor import unreal_call_is_read_only
 from .workflow import ModelingBrief, ModelingProgress, REPORTS, visible_text
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,8 @@ class ChatService:
         self.publish = publish
         self.runs: dict[str, Run] = {}  # conversation id -> active run
         self.locks: dict[str, str] = {}  # blender endpoint -> conversation id
+        self.unreal = None  # UnrealMonitor, set by the API
+        self._ue_preview_task: asyncio.Task | None = None
         self.session_allow: dict[str, set[str]] = {}
         self._preview_task: asyncio.Task | None = None
         self.mcp_restarting = False
@@ -139,6 +142,21 @@ class ChatService:
         d.mkdir(parents=True, exist_ok=True)
         return str(d)
 
+    def _unreal_prompt_lines(self) -> list[str]:
+        ue = self.settings.get().get("unreal") or {}
+        if not (ue.get("enabled", True) and ue.get("inject_into_ai", True)):
+            return []
+        name = ue.get("server_name") or "unreal-mcp"
+        lines = [
+            f"Unreal Engine 5 のゲーム開発（レベル、アクタ、ブループリント、マテリアル、PIE など）は、MCP サーバー「{name}」"
+            "（Unreal Editor 内で動作）のツールで行ってください。list_toolsets / describe_toolset で使えるツールを確認してから"
+            "call_tool で実行し、そのサーバーの指示に従ってください。",
+            "Blender で作ったアセットを UE5 に持ち込む場合は、Blender MCP 側の書き出し機能を使ってください。",
+        ]
+        if self.unreal is not None and self.unreal.state.get("status") != "connected":
+            lines.append("現在 Unreal Editor には接続されていません。UE の操作が必要な場合は、エディタの起動をユーザーに依頼してください。")
+        return lines
+
     def _system_append(self, project: dict, mode: str = "modeling") -> str:
         if mode == "prompt":
             return (
@@ -159,9 +177,10 @@ class ChatService:
             )
         name = self.settings.get()["mcp"].get("server_name") or "blender"
         lines = [
-            "あなたはデスクトップアプリ「Roxy Blender AI」から利用されています。",
+            "あなたはデスクトップアプリ「Roxy AI」から利用されています。",
             f"Blenderの操作・確認は MCP サーバー「{name}」(Roxy-BlenderMCP-v2) のツールで行い、"
             "そのサーバーが示す指示・ガイド・ルールに従ってください。",
+            *self._unreal_prompt_lines(),
             "ユーザーが別の言語で書かない限り、日本語で回答してください。",
             "現在の制作条件が添えられている場合は、その条件を制作の基準にしてください。"
             "引き継いだプロンプトや参考画像と食い違う場合も、制作条件を優先してください。"
@@ -184,10 +203,15 @@ class ChatService:
 
     def _mcp_servers(self, project: dict) -> dict[str, dict]:
         s = self.settings.get()
-        if not s["mcp"].get("inject_into_ai", True):
-            return {}
-        cmd = mcp_server_command(s, project["blender_host"], int(project["blender_port"]))
-        return {s["mcp"].get("server_name") or "blender": cmd}
+        servers = {}
+        if s["mcp"].get("inject_into_ai", True):
+            servers[s["mcp"].get("server_name") or "blender"] = mcp_server_command(
+                s, project["blender_host"], int(project["blender_port"]))
+        ue = s.get("unreal") or {}
+        if ue.get("enabled", True) and ue.get("inject_into_ai", True) and ue.get("url"):
+            # The UE MCP is an HTTP server inside Unreal Editor; AIs connect to it directly.
+            servers[ue.get("server_name") or "unreal-mcp"] = {"url": ue["url"]}
+        return servers
 
     def active_runs(self) -> list[dict]:
         return [r.snapshot() for r in self.runs.values()]
@@ -201,15 +225,20 @@ class ChatService:
             raise Conflict("この会話は応答を生成中です。完了または中断してから送信してください。")
         if (self.db.get_conversation(conversation_id) or {}).get("mode") == "prompt":
             return f"prompt:{conversation_id}"
-        key = self.endpoint(project)
-        holder = self.locks.get(key)
-        if holder and holder != conversation_id:
-            conv = self.db.get_conversation(holder) or {}
-            raise Conflict(
-                f"同じBlender（{key}）に対して別の会話「{conv.get('title') or '無題'}」がAIを実行中です。"
-                "競合を防ぐため、完了または中断してから送信してください。"
-            )
-        return key
+        keys = [self.endpoint(project)]
+        ue = self.settings.get().get("unreal") or {}
+        if ue.get("enabled", True) and ue.get("inject_into_ai", True) and ue.get("url"):
+            keys.append(f"unreal:{ue['url']}")  # one AI at a time per Unreal Editor too
+        for key in keys:
+            holder = self.locks.get(key)
+            if holder and holder != conversation_id:
+                conv = self.db.get_conversation(holder) or {}
+                target = "Unreal Editor" if key.startswith("unreal:") else f"Blender（{key}）"
+                raise Conflict(
+                    f"同じ{target}に対して別の会話「{conv.get('title') or '無題'}」がAIを実行中です。"
+                    "競合を防ぐため、完了または中断してから送信してください。"
+                )
+        return "|".join(keys)
 
     async def restart_mcp(self, project: dict) -> dict:
         if self.mcp_restarting:
@@ -286,7 +315,8 @@ class ChatService:
         run = Run(new_id(), conversation_id, project["id"], provider, model, user_msg["id"], assistant["id"], lock_key,
                   effort=effort, mode=conv["mode"])
         self.runs[conversation_id] = run
-        self.locks[lock_key] = conversation_id
+        for key in lock_key.split("|"):
+            self.locks[key] = conversation_id
         self.db.touch_project(project["id"])
         await self.publish({"type": "conversation.updated", "conversation": conv})
         await self.publish({"type": "message.created", "message": user_msg})
@@ -371,8 +401,9 @@ class ChatService:
                     self.db.set_ai_session(run.conversation_id, run.provider, run.session_id, msg["seq"], run.model)
                 await self.publish({"type": "message.updated", "message": msg})
             self.runs.pop(run.conversation_id, None)
-            if self.locks.get(run.lock_key) == run.conversation_id:
-                self.locks.pop(run.lock_key, None)
+            for key in run.lock_key.split("|"):
+                if self.locks.get(key) == run.conversation_id:
+                    self.locks.pop(key, None)
             await self.publish({"type": "run.finished", "conversation_id": run.conversation_id, "run_id": run.id,
                                 "status": final_status, "error": error})
             op("run.end", conversation=run.conversation_id, run=run.id, status=final_status, error=error,
@@ -515,6 +546,11 @@ class ChatService:
                 await self.publish({"type": "blender.tool_result", "conversation_id": cid, "tool_call": tc})
                 if ev.ok and not self.monitor.is_readonly_tool(tc["tool"]):
                     self._schedule_preview()
+            elif tc["server"] == ((self.settings.get().get("unreal") or {}).get("server_name") or "unreal-mcp"):
+                # Shown in the same "MCPの結果" list; the UE preview follows changes made by the AI.
+                await self.publish({"type": "blender.tool_result", "conversation_id": cid, "tool_call": tc})
+                if ev.ok and tc["tool"] == "call_tool":
+                    self._schedule_unreal_preview()
             await self._persist_partial(run)
         elif isinstance(ev, StatusUpdate):
             run.status_text = ev.text
@@ -525,6 +561,21 @@ class ChatService:
             run.session_id = ev.session_id or run.session_id
         elif isinstance(ev, Usage):
             run.usage = ev.data
+
+    def _schedule_unreal_preview(self) -> None:
+        if self.unreal is None or not (self.settings.get().get("unreal") or {}).get("auto_preview", True):
+            return
+        if self._ue_preview_task and not self._ue_preview_task.done():
+            self._ue_preview_task.cancel()
+
+        async def later():
+            await asyncio.sleep(2.0)
+            try:
+                await self.unreal.refresh(preview=True)
+            except Exception as e:
+                logger.debug("UE auto preview failed: %s", e)
+
+        self._ue_preview_task = asyncio.create_task(later())
 
     def _schedule_preview(self) -> None:
         """After the AI changed the scene, refresh preview + scene facts (debounced)."""
@@ -568,6 +619,14 @@ class ChatService:
                                       or (req.read_only and s["approval"].get("auto_approve_readonly_mcp", True))):
                 op("approval.auto", conversation=run.conversation_id, tool=req.tool_name)
                 return ApprovalDecision(allow=True)
+            ue_name = (s.get("unreal") or {}).get("server_name") or "unreal-mcp"
+            if server == ue_name:
+                req.read_only = unreal_call_is_read_only(tool, req.input)
+                if s["approval"].get("auto_approve_unreal_mcp") or (
+                        req.read_only and s["approval"].get("auto_approve_unreal_readonly", True)):
+                    op("approval.auto", conversation=run.conversation_id, tool=req.tool_name,
+                       inner=(req.input or {}).get("tool_name") if isinstance(req.input, dict) else None)
+                    return ApprovalDecision(allow=True)
         elif req.kind == "mcp_elicitation" and key in allowed and not req.schema:
             return ApprovalDecision(allow=True)
 

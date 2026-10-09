@@ -17,6 +17,7 @@ export function useTick(active: boolean) {
 
 const SUGGESTIONS = [
   "今のBlenderシーンの状態を確認して教えて",
+  "UE5で開いているレベルの状態を確認して教えて",
   "添付した三面図をもとに、モデリングの進め方を相談したい",
   "選択中のオブジェクトの問題点をチェックして",
 ];

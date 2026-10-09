@@ -1,7 +1,7 @@
 [package]
 name = "roxy-blender-ai"
 version = "0.1.0"
-description = "Roxy Blender AI desktop shell"
+description = "Roxy AI desktop shell"
 edition = "2021"
 
 [build-dependencies]

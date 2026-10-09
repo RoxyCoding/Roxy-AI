@@ -3,6 +3,7 @@ import { EventSocket, del, get, patch, post } from "./backend";
 import type {
   Approval,
   BlenderState,
+  UnrealState,
   Bootstrap,
   Conversation,
   ConversationDetail,
@@ -37,6 +38,7 @@ export interface State {
   runs: Record<string, RunSnapshot>;
   approvals: Approval[];
   blender: BlenderState;
+  unreal: UnrealState;
   providers: ProviderStatus[];
   providersLoading: boolean;
   mcpResults: (ToolCall & { conversation_id: string })[];
@@ -77,11 +79,14 @@ function onEvent(s: State, ev: ServerEvent): State {
       return {
         ...s,
         blender: ev.blender,
+        unreal: ev.unreal ?? s.unreal,
         runs: Object.fromEntries(ev.runs.map((r) => [r.conversation_id, r])),
         approvals: ev.runs.flatMap((r) => r.approvals),
       };
     case "blender.state":
       return { ...s, blender: ev.state };
+    case "unreal.state":
+      return { ...s, unreal: ev.state };
     case "blender.tool_result":
       return { ...s, mcpResults: [{ ...ev.tool_call, conversation_id: ev.conversation_id }, ...s.mcpResults].slice(0, 30) };
     case "conversation.updated": {
@@ -219,6 +224,7 @@ function initial(boot: Bootstrap): State {
     runs: Object.fromEntries(boot.runs.map((r) => [r.conversation_id, r])),
     approvals: boot.runs.flatMap((r) => r.approvals),
     blender: boot.blender,
+    unreal: boot.unreal ?? { status: "disabled", url: "", error: "", toolsets: [], editor: null, preview: null, updated_at: 0 },
     providers: [],
     providersLoading: false,
     mcpResults: [],

@@ -2,6 +2,7 @@ import { useStore } from "../lib/store";
 import { cx } from "../lib/format";
 import { Icon } from "./Icons";
 import { UsageBadge } from "./UsageBadge";
+import { unrealBadge } from "./UnrealSections";
 import type { SettingsTab } from "./SettingsDialog";
 
 export function blenderBadge(b: { mcp: string; blender: string }): { cls: string; label: string } {
@@ -11,6 +12,7 @@ export function blenderBadge(b: { mcp: string; blender: string }): { cls: string
   if (b.blender === "connected") return { cls: "ok", label: "Blender接続中" };
   if (b.blender === "disconnected") return { cls: "bad", label: "Blender未接続" };
   if (b.blender === "unresponsive") return { cls: "wait", label: "Blender応答なし" };
+  if (b.blender === "port_conflict") return { cls: "bad", label: "ポート競合" };
   return { cls: "wait", label: "確認中" };
 }
 
@@ -53,6 +55,15 @@ export function TopBar(props: {
         >
           <span className="dot" /> {badge.label}
         </button>
+        {state.unreal.status !== "disabled" && (
+          <button
+            className={cx("pill", unrealBadge(state.unreal).cls)}
+            title={state.unreal.editor?.level || state.unreal.url}
+            onClick={() => (props.panelOpen ? props.onSettings("unreal") : props.onTogglePanel())}
+          >
+            <span className="dot" /> {unrealBadge(state.unreal).label}
+          </button>
+        )}
         <button className="icon-btn" title={props.panelOpen ? "右パネルを閉じる" : "右パネルを開く"} onClick={props.onTogglePanel}>
           <Icon name="panel" />
         </button>

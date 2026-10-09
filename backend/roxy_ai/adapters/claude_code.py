@@ -104,7 +104,7 @@ def _tool_result_payload(content: Any) -> tuple[str, list[tuple[str, bytes]]]:
 
 class ClaudeCodeAdapter(AIAdapter):
     id = "claude"
-    name = "Claude Code"
+    name = "Claude"
 
     def __init__(self, settings: SettingsStore, secrets: Secrets, probe_cwd: Path):
         self._settings = settings
@@ -158,7 +158,8 @@ class ClaudeCodeAdapter(AIAdapter):
             resume=req.session_id or None,
             effort=req.effort or None,
             include_partial_messages=True,
-            mcp_servers={name: {"type": "stdio", **cfg} for name, cfg in req.mcp_servers.items()},
+            mcp_servers={name: ({"type": "http", **cfg} if "url" in cfg else {"type": "stdio", **cfg})
+                         for name, cfg in req.mcp_servers.items()},
             permission_mode="bypassPermissions" if req.full_access else (conf.get("permission_mode") or "default"),
             can_use_tool=can_use_tool,
             add_dirs=list(req.extra_dirs),
@@ -438,7 +439,7 @@ class ClaudeCodeAdapter(AIAdapter):
                                 f"MCPサーバー「{srv.get('name')}」に接続できませんでした（{srv.get('status')}）。"
                                 "Blender が起動・応答しているか右パネルで確認してください。", "warning"))
                 elif msg.subtype == "compact_boundary":
-                    await emit(StatusUpdate("会話が長くなったため、Claude Code がコンテキストを圧縮しました"))
+                    await emit(StatusUpdate("会話が長くなったため、Claude がコンテキストを圧縮しました"))
             elif isinstance(msg, RateLimitEvent):
                 # Live quota updates while working; the GUI re-reads usage after the run.
                 info = msg.rate_limit_info
@@ -449,7 +450,7 @@ class ClaudeCodeAdapter(AIAdapter):
                 result = msg
 
         if result is None:
-            return RunResult(session_id, "error", error=last_error or "Claude Code から結果が返りませんでした", model=model)
+            return RunResult(session_id, "error", error=last_error or "Claude から結果が返りませんでした", model=model)
         session_id = result.session_id or session_id
         live.session_id = session_id
         usage = {"cost_usd": result.total_cost_usd, "turns": result.num_turns, **(result.usage or {})}

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { patch, post } from "../lib/backend";
 import { useStore } from "../lib/store";
-import { cx, effortLabel, findModel } from "../lib/format";
+import { effortLabel, findModel } from "../lib/format";
 import { Icon } from "./Icons";
 
 export function ComposerControls() {
@@ -34,18 +34,18 @@ export function ComposerControls() {
 
   return (
     <div className="composer-controls" aria-label="チャットの設定">
-      <div className="segmented" role="tablist" aria-label="AIの切り替え">
+      <select className="select provider-select" value={provider} disabled={running} aria-label="AIの切り替え"
+              title={running ? "応答生成中は切り替えできません" : "使用するAI"}
+              onChange={(e) => {
+                const id = e.target.value;
+                if (id === provider) return;
+                const conf = state.settings.providers[id];
+                void actions.setDraft(id, conf?.default_model ?? "", conf?.default_effort ?? "");
+              }}>
         {enabled.map((p) => (
-          <button key={p.id} role="tab" aria-selected={p.id === provider} className={cx(p.id === provider && "on")}
-                  disabled={running} onClick={() => {
-                    if (p.id === provider) return;
-                    const conf = state.settings.providers[p.id];
-                    void actions.setDraft(p.id, conf?.default_model ?? "", conf?.default_effort ?? "");
-                  }}>
-            {p.name}
-          </button>
+          <option key={p.id} value={p.id}>{p.name}</option>
         ))}
-      </div>
+      </select>
       <select className="select" value={state.draftModel} disabled={running} aria-label="モデル" onChange={(e) => {
         const model = e.target.value;
         const next = findModel(models, model);
