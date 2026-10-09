@@ -97,6 +97,89 @@ function General() {
   );
 }
 
+interface ModelDownload {
+  id: string;
+  source: string;
+  name: string;
+  status: "preparing" | "downloading" | "verifying" | "done" | "error" | "cancelled";
+  total: number;
+  done: number;
+  error: string;
+  path: string;
+}
+
+const DL_STATUS: Record<ModelDownload["status"], string> = {
+  preparing: "準備中",
+  downloading: "ダウンロード中",
+  verifying: "検証中",
+  done: "完了",
+  error: "失敗",
+  cancelled: "中止",
+};
+
+function ModelDownloads() {
+  const { actions } = useStore();
+  const [source, setSource] = useState("");
+  const [jobs, setJobs] = useState<ModelDownload[]>([]);
+  const active = jobs.some((j) => ["preparing", "downloading", "verifying"].includes(j.status));
+  const load = async () => setJobs((await actions.guard(() => get<ModelDownload[]>("/api/local-models/downloads"))) ?? []);
+  useEffect(() => void load(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(async () => {
+      const next = (await actions.guard(() => get<ModelDownload[]>("/api/local-models/downloads"))) ?? [];
+      setJobs(next);
+      if (!next.some((j) => ["preparing", "downloading", "verifying"].includes(j.status))) void actions.refreshProviders(true);
+    }, 1000);
+    return () => clearInterval(t);
+  }, [active, actions]);
+  const start = async () => {
+    if (!source.trim()) return;
+    const job = await actions.guard(() => post<ModelDownload>("/api/local-models/downloads", { source: source.trim() }));
+    if (job) {
+      setSource("");
+      await load();
+    }
+  };
+  const gb = (n: number) => (n / 1e9).toFixed(2);
+  return (
+    <div className="form">
+      <Field label="モデルを追加（ダウンロード）" hint="ollama.com のモデルページのURL（例: https://ollama.com/<ユーザー>/<モデル>、:タグ で量子化を指定）か、Hugging Face の .gguf ファイルのリンク。Ollama のインストールは不要です。">
+        <div className="row gap-sm">
+          <input className="input grow" value={source} placeholder="https://ollama.com/richardyoung/qwythos-9b-abliterated"
+                 onChange={(e) => setSource(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void start()} />
+          <button className="btn" disabled={!source.trim()} onClick={() => void start()}>
+            <Icon name="download" size={13} /> ダウンロード
+          </button>
+        </div>
+      </Field>
+      {jobs.map((j) => (
+        <div key={j.id} className="download-row">
+          <div className="row between gap-sm">
+            <span className="ellipsis strong">{j.name}</span>
+            <span className="muted small">
+              {DL_STATUS[j.status]}
+              {j.total > 0 && j.status !== "done" ? ` ${gb(j.done)} / ${gb(j.total)} GB` : ""}
+              {j.status === "done" ? ` ${gb(j.total)} GB` : ""}
+            </span>
+            {["preparing", "downloading"].includes(j.status) && (
+              <button className="icon-btn sm" title="中止" onClick={async () => { await actions.guard(() => del(`/api/local-models/downloads/${j.id}`)); await load(); }}>
+                <Icon name="x" size={13} />
+              </button>
+            )}
+          </div>
+          {j.total > 0 && j.status !== "error" && (
+            <div className="download-bar"><span style={{ width: `${Math.min(100, (j.done / j.total) * 100)}%` }} /></div>
+          )}
+          {j.error && <div className="error-text">{j.error}</div>}
+          {j.status === "done" && <div className="muted small">保存先: {j.path}（モデル一覧に追加されました）</div>}
+          {j.status === "cancelled" && <div className="muted small">中止しました。同じURLで再開すると続きからダウンロードします。</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ProviderCard({ p }: { p: ProviderStatus }) {
   const { state, actions } = useStore();
   const conf = state.settings.providers[p.id] as Record<string, unknown> & { enabled: boolean; default_model: string };
@@ -109,7 +192,7 @@ function ProviderCard({ p }: { p: ProviderStatus }) {
     setBusy(false);
     setKey("");
     if (r && !r.ok) actions.toast(r.error || "ログインできませんでした", "error");
-    if (r?.ok) actions.toast("ログイン状態を更新しました", "success");
+    if (r?.ok) actions.toast(method === "start_server" ? "ローカルサーバーを起動しました" : method === "unload" ? "モデルを解放しました" : "ログイン状態を更新しました", "success");
     await actions.refreshProviders(true);
   };
 
@@ -156,6 +239,107 @@ function ProviderCard({ p }: { p: ProviderStatus }) {
         </div>
       )}
 
+      {p.id === "local" && (
+        <div className="form">
+          <p className="muted small">
+            PC上のモデルで動かします。外部への送信はなく、ログインも不要です。AIの実行は Codex が担当するため、
+            Blender MCP・承認・中断はほかのAIと同じように使えます（Codex CLI のパス・サンドボックス・承認ポリシーは Codex の設定を共有）。
+          </p>
+          <Field label="実行方法">
+            <select className="select" value={String(conf.runtime ?? "builtin")} onChange={(e) => void save({ runtime: e.target.value, default_model: "" }).then(() => actions.refreshProviders(true))}>
+              <option value="builtin">アプリ内蔵（llama.cpp）— 推奨</option>
+              <option value="lmstudio">LM Studio のサーバーを使う</option>
+              <option value="ollama">Ollama のサーバーを使う</option>
+            </select>
+          </Field>
+          {(conf.runtime ?? "builtin") === "builtin" ? (
+            <>
+              <p className="muted small">
+                GGUF 形式のモデルファイル（.gguf）をアプリが直接読み込みます。下のモデルフォルダのほか、LM Studio がダウンロード済みのモデルも自動で見つけます。
+                画像対応（mmproj ファイル付き）のモデルには画像も渡せます。
+              </p>
+              <div className="row gap-sm wrap">
+                <button className="btn" onClick={() => void actions.guard(() => post("/api/system/reveal", { path: String(conf.models_dir || "") || `${state.boot.data_dir}\\models` }))}>
+                  <Icon name="folder" size={13} /> モデルフォルダを開く
+                </button>
+                <button className="btn ghost" disabled={busy} onClick={() => void login("unload")} title="GPUメモリを解放します（次の送信で再読み込み）">
+                  モデルを解放
+                </button>
+                <button className="btn ghost" disabled={state.providersLoading} onClick={() => void actions.refreshProviders(true)}>
+                  <Icon name="refresh" size={13} /> モデル一覧を更新
+                </button>
+              </div>
+              <Field label="モデルの保存場所" hint="ダウンロードしたモデルの保存先。空欄なら既定（アプリのデータフォルダ内の models）。変更前に保存したモデルも引き続き使えます。">
+                <TextSetting browse="folder" value={String(conf.models_dir ?? "")} placeholder={`${state.boot.data_dir}\\models`}
+                             onSave={(v) => void save({ models_dir: v.trim() }).then(() => actions.refreshProviders(true))} />
+              </Field>
+              <ModelDownloads />
+              <Field label="追加のモデルフォルダ（任意・1行に1つ）">
+                <textarea className="input" rows={2} defaultValue={((conf.model_dirs as string[] | undefined) ?? []).join("\n")}
+                          onBlur={(e) => void save({ model_dirs: e.target.value.split(/\r?\n/).map((x) => x.trim()).filter(Boolean) }).then(() => actions.refreshProviders(true))} />
+              </Field>
+              <Field label="llama-server の場所（任意）" hint="空欄なら自動で探します。未インストールの場合は PowerShell で winget install ggml.llamacpp を実行してください。">
+                <TextSetting browse="file" value={String(conf.llama_server_path ?? "")} placeholder="自動検出" onSave={(v) => void save({ llama_server_path: v.trim() }).then(() => actions.refreshProviders(true))} />
+              </Field>
+              <div className="row gap-sm">
+                <Field label="GPUに載せる層の数" hint="99 = すべて。VRAM不足で失敗する場合は下げる（0 = CPUのみ）">
+                  <TextSetting type="number" value={Number(conf.gpu_layers ?? 99)} onSave={(v) => void save({ gpu_layers: Math.max(0, Number(v) || 0) })} />
+                </Field>
+                <Field label="コンテキスト長" hint="Codex の指示とツール定義だけで約1万トークン使います">
+                  <TextSetting type="number" value={Number(conf.ctx_size ?? 32768)} onSave={(v) => void save({ ctx_size: Math.max(8192, Number(v) || 32768) })} />
+                </Field>
+                <Field label="自動解放（分）" hint="使わない時間がこれを超えるとGPUメモリを解放（0 = しない）">
+                  <TextSetting type="number" value={Number(conf.idle_unload_minutes ?? 15)} onSave={(v) => void save({ idle_unload_minutes: Math.max(0, Number(v) || 0) })} />
+                </Field>
+              </div>
+              <h3 className="sub">CPUオフロード</h3>
+              <p className="muted small">
+                VRAMに入りきらないモデルを、一部CPU（メインメモリ）で動かします。数値はすべて自由に指定でき、0 でオフです。
+                CPUに置くほど遅くなります。変更は次の送信時にモデルを読み込み直して反映します。
+              </p>
+              <div className="row gap-sm">
+                <Field label="CPUに置く層の数" hint="モデルの層のうち、この数をCPUで処理（指定すると「GPUに載せる層の数」より優先）">
+                  <TextSetting type="number" value={Number(conf.cpu_layers ?? 0)} onSave={(v) => void save({ cpu_layers: Math.max(0, Math.floor(Number(v) || 0)) })} />
+                </Field>
+                <Field label="MoEエキスパートをCPUに置く層の数" hint="MoEモデル用（--n-cpu-moe）。先頭からこの数の層のエキスパートをCPUへ">
+                  <TextSetting type="number" value={Number(conf.n_cpu_moe ?? 0)} onSave={(v) => void save({ n_cpu_moe: Math.max(0, Math.floor(Number(v) || 0)) })} />
+                </Field>
+                <Field label="CPUスレッド数" hint="0 = 自動">
+                  <TextSetting type="number" value={Number(conf.threads ?? 0)} onSave={(v) => void save({ threads: Math.max(0, Math.floor(Number(v) || 0)) })} />
+                </Field>
+              </div>
+              <Toggle checked={Boolean(conf.kv_on_cpu)} onChange={(v) => void save({ kv_on_cpu: v })}
+                      label="KVキャッシュをメインメモリに置く"
+                      hint="長いコンテキストでVRAMが足りないときに使用（--no-kv-offload）。速度は落ちます。" />
+            </>
+          ) : (
+            <>
+              <Field label="サーバーのアドレス（任意）" hint="空欄の場合は既定（LM Studio: 127.0.0.1:1234 / Ollama: 127.0.0.1:11434）。">
+                <TextSetting value={String(conf.base_url ?? "")} placeholder={conf.runtime === "ollama" ? "http://127.0.0.1:11434" : "http://127.0.0.1:1234"}
+                             onSave={(v) => void save({ base_url: v.trim() }).then(() => actions.refreshProviders(true))} />
+              </Field>
+              <div className="row gap-sm wrap">
+                {conf.runtime === "lmstudio" && (
+                  <button className="btn" disabled={busy} onClick={() => void login("start_server")}>
+                    {busy ? <span className="spinner" /> : <Icon name="plug" size={13} />} LM Studio サーバーを起動
+                  </button>
+                )}
+                <button className="btn ghost" disabled={state.providersLoading} onClick={() => void actions.refreshProviders(true)}>
+                  <Icon name="refresh" size={13} /> モデル一覧を更新
+                </button>
+              </div>
+            </>
+          )}
+          <Toggle checked={Boolean(conf.allow_shell)} onChange={(v) => void save({ allow_shell: v })}
+                  label="シェルコマンドの実行を許可する"
+                  hint="小さいモデルは Blender MCP の代わりにシェルを使おうとして失敗しやすいため、既定ではオフです。" />
+          <p className="muted small">
+            ツール呼び出しに対応したモデル（Qwen3 系 / gpt-oss など）を推奨します。小さいモデルはツールを呼ばずに結果を推測で答えたり、
+            Blender の操作を誤ったりすることがあります。重要な作業の前にはチェックポイントを保存してください。
+          </p>
+        </div>
+      )}
+
       {p.id === "codex" && (
         <div className="form">
           <div className="row gap-sm wrap">
@@ -197,6 +381,7 @@ function ProviderCard({ p }: { p: ProviderStatus }) {
             }}
           >
             {p.id === "codex" && <option value="">Codexの既定</option>}
+            {p.id === "local" && <option value="">自動（最初のモデル）</option>}
             {p.models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </Field>
@@ -212,9 +397,11 @@ function ProviderCard({ p }: { p: ProviderStatus }) {
             </Field>
           );
         })()}
-        <Field label="CLIのパス" hint="空欄の場合は PATH 上のコマンドを使用します。">
-          <TextSetting browse="file" value={String(conf.cli_path ?? "")} placeholder={p.id === "claude" ? "claude" : "codex"} onSave={(v) => void save({ cli_path: v })} />
-        </Field>
+        {p.id !== "local" && (
+          <Field label="CLIのパス" hint="空欄の場合は PATH 上のコマンドを使用します。">
+            <TextSetting browse="file" value={String(conf.cli_path ?? "")} placeholder={p.id === "claude" ? "claude" : "codex"} onSave={(v) => void save({ cli_path: v })} />
+          </Field>
+        )}
       </div>
     </div>
   );

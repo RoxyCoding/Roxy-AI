@@ -38,7 +38,8 @@ class Paths:
         self.logs = root / "logs"
         self.exports = root / "exports"
         self.workspaces = root / "workspaces"
-        for d in (self.attachments, self.logs, self.exports, self.workspaces):
+        self.models = root / "models"  # .gguf files for the built-in local LLM runtime
+        for d in (self.attachments, self.logs, self.exports, self.workspaces, self.models):
             d.mkdir(parents=True, exist_ok=True)
 
 
@@ -115,6 +116,27 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "default_effort": "",
             "sandbox": "workspace-write",
             "approval_policy": "on-request",
+        },
+        # Local models run through Codex (built-in lmstudio / ollama providers);
+        # CLI path, sandbox and approval policy come from the codex settings above.
+        "local": {
+            "enabled": True,
+            "runtime": "builtin",  # builtin (app-managed llama.cpp) | lmstudio | ollama
+            "base_url": "",  # lmstudio/ollama: empty = the runtime's default local address
+            "default_model": "",  # empty: the first model found
+            "llama_server_path": "",  # empty: llama-server on PATH or from winget
+            "models_dir": "",  # where downloaded models are saved; empty = <data>/models
+            "model_dirs": [],  # extra folders to search for .gguf files
+            "ctx_size": 32768,
+            "gpu_layers": 99,  # layers offloaded to the GPU (0 = CPU only)
+            # CPU offload (all free numbers; 0 / False = off)
+            "cpu_layers": 0,  # keep N layers on the CPU (overrides gpu_layers)
+            "n_cpu_moe": 0,  # MoE expert weights of the first N layers on the CPU
+            "threads": 0,  # CPU threads, 0 = auto
+            "kv_on_cpu": False,  # KV cache in system RAM
+            "idle_unload_minutes": 15,  # free VRAM after this long unused (0 = never)
+            "allow_shell": False,  # small models misuse the shell instead of the Blender MCP
+            "default_effort": "",
         },
     },
     "mcp": {

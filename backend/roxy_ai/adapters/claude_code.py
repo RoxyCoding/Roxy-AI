@@ -34,7 +34,9 @@ from claude_agent_sdk import (
     ToolUseBlock,
     UserMessage,
 )
-from claude_agent_sdk.types import StreamEvent, ThinkingBlock
+from claude_agent_sdk.types import RateLimitEvent, StreamEvent, ThinkingBlock
+
+from ..usage import UsageInfo, apply_claude_event, claude_usage_from_text
 
 from ..config import Secrets, SettingsStore
 from ..procs import resolve_cli, run_capture
@@ -113,6 +115,8 @@ class ClaudeCodeAdapter(AIAdapter):
         self._status_at = 0.0
         self._status_lock = asyncio.Lock()
         self._reaper: asyncio.Task | None = None
+        self._usage: UsageInfo | None = None
+        self._usage_lock = asyncio.Lock()
 
     # Configuration ---------------------------------------------------------
 
@@ -435,6 +439,12 @@ class ClaudeCodeAdapter(AIAdapter):
                                 "Blender が起動・応答しているか右パネルで確認してください。", "warning"))
                 elif msg.subtype == "compact_boundary":
                     await emit(StatusUpdate("会話が長くなったため、Claude Code がコンテキストを圧縮しました"))
+            elif isinstance(msg, RateLimitEvent):
+                # Live quota updates while working; the GUI re-reads usage after the run.
+                info = msg.rate_limit_info
+                self._usage = apply_claude_event(self._usage, {
+                    "rate_limit_type": info.rate_limit_type, "utilization": info.utilization,
+                    "resets_at": info.resets_at, "status": info.status})
             elif isinstance(msg, ResultMessage):
                 result = msg
 
@@ -465,6 +475,34 @@ class ClaudeCodeAdapter(AIAdapter):
 
     def max_image_edge(self) -> int:
         return 1568  # larger images are downscaled by the API anyway
+
+    async def usage(self, refresh: bool = False) -> UsageInfo | None:
+        """Remaining plan quota via the CLI's local /usage command (no model call, no tokens)."""
+        cached = getattr(self, "_usage", None)
+        if cached and not refresh and time.time() - cached.fetched_at < 120:
+            return cached
+        async with self._usage_lock:
+            client = None
+            try:
+                client = ClaudeSDKClient(self._options(None, None))
+                await asyncio.wait_for(client.connect(), 90)
+                await client.query("/usage")
+                text = ""
+                async for msg in client.receive_response():
+                    if isinstance(msg, ResultMessage):
+                        text = msg.result or text
+                    elif isinstance(msg, AssistantMessage):
+                        text = "".join(b.text for b in msg.content if isinstance(b, TextBlock)) or text
+                self._usage = claude_usage_from_text(text)
+            except AdapterUnavailable as e:
+                self._usage = UsageInfo("claude", available=False, note=str(e))
+            except Exception as e:
+                logger.warning("Claude usage read failed: %s", e)
+                self._usage = UsageInfo("claude", available=False, note=f"利用枠を取得できませんでした: {e}")
+            finally:
+                if client is not None:
+                    await self._safe_disconnect(client)
+            return self._usage
 
     async def login(self, method: str, api_key: str | None = None) -> dict:
         if method == "api_key":

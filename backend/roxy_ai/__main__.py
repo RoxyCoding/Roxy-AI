@@ -50,7 +50,7 @@ def main() -> None:
     sock.bind(("127.0.0.1", args.port))
     port = sock.getsockname()[1]
 
-    app = create_app(paths, token)
+    app = create_app(paths, token, port)
     config = uvicorn.Config(app, log_level="info" if args.debug else "warning", ws_max_size=64 * 1024 * 1024)
     server = uvicorn.Server(config)
 

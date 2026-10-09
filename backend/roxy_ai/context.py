@@ -14,7 +14,7 @@ When sending to provider P:
 
 from __future__ import annotations
 
-PROVIDER_NAMES = {"claude": "Claude Code", "codex": "Codex"}
+PROVIDER_NAMES = {"claude": "Claude Code", "codex": "Codex", "local": "ローカルLLM"}
 
 HANDOFF_INTRO_FRESH = (
     "以下は、このアプリでこれまでに行われた会話の記録です（別のAIとのやり取りを含む場合があります）。"

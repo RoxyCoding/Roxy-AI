@@ -335,6 +335,22 @@ class CodexAdapter(AIAdapter):
         self._status = None
         return {"ok": bool(done.get("success")), "error": done.get("error"), "auth_url": url}
 
+    async def usage(self, refresh: bool = False):
+        from ..usage import UsageInfo, codex_usage
+
+        cached = getattr(self, "_usage", None)
+        if cached and not refresh and time.time() - cached.fetched_at < 120:
+            return cached
+        try:
+            server = await self._get_server()
+            self._usage = codex_usage(await server.request("account/rateLimits/read", {}, timeout=30))
+        except AdapterUnavailable as e:
+            self._usage = UsageInfo("codex", available=False, note=str(e))
+        except Exception as e:
+            logger.warning("Codex usage read failed: %s", e)
+            self._usage = UsageInfo("codex", available=False, note=f"利用枠を取得できませんでした: {e}")
+        return self._usage
+
     async def logout(self) -> dict:
         server = await self._get_server()
         await server.request("account/logout", {})
@@ -349,6 +365,9 @@ class CodexAdapter(AIAdapter):
                 turn.status = "failed"
                 turn.error = "Codex app-server が予期せず終了しました"
                 turn.done.set()
+            return
+        if method == "account/rateLimits/updated":
+            self._usage = None  # stale; next read fetches fresh numbers
             return
         if method == "account/login/completed":
             for fut in self._login_waiters:

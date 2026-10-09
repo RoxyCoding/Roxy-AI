@@ -435,9 +435,6 @@ class ChatService:
             prompt_only=run.mode == "prompt",
             full_access=self.full_access_for(run),
         )
-        if req.full_access:
-            await self._notice(run, "フルアクセスモードで実行しています（承認なし・サンドボックスなし）。")
-
         async def emit(ev):
             await self._on_event(run, ev)
 

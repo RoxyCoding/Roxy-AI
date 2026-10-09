@@ -52,6 +52,7 @@ export function ComposerControls() {
         void actions.setDraft(provider, model, next?.efforts.includes(state.draftEffort) ? state.draftEffort : "");
       }}>
         {provider === "codex" && <option value="">既定のモデル</option>}
+        {provider === "local" && <option value="">自動（最初のモデル）</option>}
         {models.map((m) => <option key={m.id} value={m.id} title={m.description}>{m.name}{m.supports_images ? "" : "（画像非対応）"}</option>)}
         {state.draftModel && !models.some((m) => m.id === state.draftModel) && <option value={state.draftModel}>{state.draftModel}</option>}
       </select>

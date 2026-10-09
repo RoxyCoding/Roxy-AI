@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { discoverBackend, get, restartBackend } from "./lib/backend";
 import { StoreProvider, useStore } from "./lib/store";
 import type { Bootstrap } from "./lib/types";
@@ -14,10 +14,16 @@ import { cx } from "./lib/format";
 import { useSlide } from "./components/useSlide";
 
 function useTheme(theme: string) {
+  const first = useRef(true);
   useEffect(() => {
     const root = document.documentElement;
+    // Cross-fade colours when the user switches theme (not on first paint).
+    if (!first.current) root.classList.add("theme-anim");
+    first.current = false;
     if (theme === "system") root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", theme);
+    const t = setTimeout(() => root.classList.remove("theme-anim"), 320);
+    return () => clearTimeout(t);
   }, [theme]);
 }
 
@@ -44,7 +50,8 @@ function Shell() {
 
   return (
     <LightboxProvider>
-      <div className={cx("shell", sidebar.value && "with-sidebar", panel.value && "with-panel")}>
+      {/* Columns follow the open state, so a closing panel animates its width to 0 while still mounted. */}
+      <div className={cx("shell", sidebarOpen && "with-sidebar", panelOpen && "with-panel")}>
         {sidebar.value && <Sidebar exiting={sidebar.exiting} onSettings={(tab) => setSettingsTab(tab ?? "general")} onClose={toggleSidebar} />}
         <main className="main">
           <TopBar

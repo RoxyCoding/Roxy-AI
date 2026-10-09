@@ -32,6 +32,7 @@ from .config import Paths, Secrets, SettingsStore
 from .db import Database
 from .logs import op, tail
 from .mcp_monitor import BlenderMonitor
+from .model_download import DownloadManager
 from .path_dialog import select_path
 
 logger = logging.getLogger(__name__)
@@ -68,7 +69,7 @@ class State:
         self.secrets = Secrets()
         self.db = Database(paths.db)
         self.attachments = AttachmentStore(self.db, paths.attachments)
-        self.adapters = build_adapters(self.settings, self.secrets, paths.workspaces)
+        self.adapters = build_adapters(self.settings, self.secrets, paths.workspaces, paths.root)
 
         async def save_image(data: bytes, mime: str, kind: str) -> dict:
             att = self.attachments.save_bytes(data, f"{kind}.{mime.split('/')[-1]}", mime, kind)
@@ -173,11 +174,15 @@ class BrowseBody(BaseModel):
     path: str = ""
 
 
+class DownloadBody(BaseModel):
+    source: str
+
+
 class RefreshBody(BaseModel):
     preview: bool = True
 
 
-def create_app(paths: Paths, token: str) -> FastAPI:
+def create_app(paths: Paths, token: str, port: int = 0) -> FastAPI:
     state = State(paths, token)
 
     @contextlib.asynccontextmanager
@@ -193,6 +198,8 @@ def create_app(paths: Paths, token: str) -> FastAPI:
         yield
         op("app.stop")
         await state.chat.shutdown()
+        if getattr(state, "downloads", None):
+            await state.downloads.shutdown()
         for a in state.adapters.values():
             try:
                 await asyncio.wait_for(a.shutdown(), 10)
@@ -203,6 +210,33 @@ def create_app(paths: Paths, token: str) -> FastAPI:
 
     app = FastAPI(title="Roxy Blender AI backend", version=__version__, lifespan=lifespan)
     app.state.roxy = state
+    local = state.adapters.get("local")
+    if local is not None and hasattr(local, "proxy"):
+        # Codex reaches local models through this translating relay (see local_proxy.py).
+        app.include_router(local.proxy.router())
+        local.attach_proxy(f"http://127.0.0.1:{port}/api/local-llm/v1", token)
+
+    # GGUF downloads for the built-in local runtime (Ollama / Hugging Face links).
+    def _models_changed() -> None:
+        if local is not None:
+            local._status = None  # type: ignore[attr-defined]
+
+    downloads = DownloadManager(local.models_dir if local is not None else paths.models, on_done=_models_changed)
+    state.downloads = downloads
+
+    @app.get("/api/local-models/downloads")
+    async def list_downloads():
+        return downloads.list()
+
+    @app.post("/api/local-models/downloads")
+    async def start_download(body: DownloadBody):
+        job = downloads.start(body.source)
+        op("model.download", source=body.source)
+        return job
+
+    @app.delete("/api/local-models/downloads/{job_id}")
+    async def cancel_download(job_id: str):
+        return {"ok": downloads.cancel(job_id)}
 
     def authorized(request_token: str | None) -> bool:
         return bool(request_token) and hmac.compare_digest(request_token, token)
@@ -281,6 +315,20 @@ def create_app(paths: Paths, token: str) -> FastAPI:
         return after
 
     # Providers -------------------------------------------------------------------------
+
+    @app.get("/api/usage")
+    async def usage(refresh: bool = False):
+        """Remaining plan quota and reset times for each AI that has one."""
+        enabled = state.settings.get()["providers"]
+
+        async def one(a):
+            if not enabled.get(a.id, {}).get("enabled", True):
+                return None
+            info = await a.usage(refresh=refresh)
+            return info.public() if info else None
+
+        results = await asyncio.gather(*(one(a) for a in state.adapters.values()))
+        return [r for r in results if r]
 
     @app.get("/api/providers")
     async def providers(refresh: bool = False):
@@ -525,6 +573,11 @@ def create_app(paths: Paths, token: str) -> FastAPI:
     async def reveal(body: RevealBody):
         target = Path(body.path).resolve()
         allowed = [paths.exports.resolve(), paths.logs.resolve(), paths.root.resolve()]
+        local_adapter = state.adapters.get("local")
+        if local_adapter is not None and hasattr(local_adapter, "models_dir"):
+            models = local_adapter.models_dir()
+            models.mkdir(parents=True, exist_ok=True)
+            allowed.append(models.resolve())
         if not any(target == a or a in target.parents for a in allowed):
             raise ValueError("このパスは開けません")
         if os.name == "nt":

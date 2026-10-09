@@ -1,6 +1,7 @@
 import { useStore } from "../lib/store";
 import { cx } from "../lib/format";
 import { Icon } from "./Icons";
+import { UsageBadge } from "./UsageBadge";
 import type { SettingsTab } from "./SettingsDialog";
 
 export function blenderBadge(b: { mcp: string; blender: string }): { cls: string; label: string } {
@@ -20,7 +21,7 @@ export function TopBar(props: {
   onTogglePanel: () => void;
   onSettings: (tab: SettingsTab) => void;
 }) {
-  const { state, actions } = useStore();
+  const { state } = useStore();
   const status = state.providers.find((p) => p.id === state.draftProvider);
   const project = state.projects.find((p) => p.id === state.activeProjectId);
   const badge = blenderBadge(state.blender);
@@ -39,20 +40,9 @@ export function TopBar(props: {
             <Icon name="alert" size={12} /> 未ログイン
           </button>
         )}
-        {state.settings.approval.full_access && state.draftMode !== "prompt" && (
-          <button
-            className="pill bad full-access"
-            title="承認なし・サンドボックスなしで実行中。クリックで解除"
-            onClick={() => {
-              if (window.confirm("フルアクセスモードを解除しますか？（次の送信から、通常の承認フローに戻ります）"))
-                void actions.saveSettings({ approval: { full_access: false } });
-            }}
-          >
-            <Icon name="alert" size={12} /> フルアクセス
-          </button>
-        )}
       </div>
       <div className="row gap-sm topbar-right">
+        <UsageBadge />
         <button className="project-name ellipsis" title="プロジェクト設定" onClick={() => props.onSettings("projects")}>
           <Icon name="folder" size={14} /> {project?.name}
         </button>

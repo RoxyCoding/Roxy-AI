@@ -184,6 +184,10 @@ class AIAdapter(abc.ABC):
     def max_image_edge(self) -> int:
         return 2048
 
+    async def usage(self, refresh: bool = False):
+        """Plan usage limits (roxy_ai.usage.UsageInfo), or None if the AI has none."""
+        return None
+
     async def login(self, method: str, api_key: str | None = None) -> dict:
         raise AdapterUnavailable(f"{self.name} のログインはこのアプリからは行えません")
 

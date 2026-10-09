@@ -37,6 +37,10 @@ RECHECK_UNRESPONSIVE = 30.0
 UNRESPONSIVE_MSG = (
     "Blender は接続を受け付けていますが、コマンドに応答しません。"
     "Blender でダイアログやモーダル操作が開いていないか、Roxy Blender MCP パネルの接続状態を確認してください。"
+    "Blender の起動中にアドオンを更新・再読み込みした場合もこの状態になります。"
+    "作業を保存して Blender を再起動してください。"
+    "再起動しても直らない場合は、Blender 公式の「MCP」拡張など別のアドオンが同じポートを使っていないか確認してください"
+    "（環境設定 → アドオン で無効にするか、ポート番号を変更）。"
 )
 SCENE_FIELDS = ["location", "size", "details", "materials", "modifiers"]
 ADDON_UPDATE_MSG = "シーン変更を自動検知するには、Blenderアドオンを更新してBlenderを再起動してください。"
