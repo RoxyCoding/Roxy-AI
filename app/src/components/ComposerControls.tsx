@@ -1,3 +1,4 @@
+import { t as tr } from "../lib/i18n";
 import { useState } from "react";
 import { patch, post } from "../lib/backend";
 import { useStore } from "../lib/store";
@@ -33,9 +34,10 @@ export function ComposerControls() {
   };
 
   return (
-    <div className="composer-controls" aria-label="チャットの設定">
-      <select className="select provider-select" value={provider} disabled={running} aria-label="AIの切り替え"
-              title={running ? "応答生成中は切り替えできません" : "使用するAI"}
+    <div className="composer-controls" aria-label={tr("チャットの設定")}>
+      {state.draftMode === "design_prompt" && provider !== "codex" && <span className="muted small">{tr("画像生成にはCodexを選択してください。このAIでは条件相談とプロンプト作成を利用できます。")}</span>}
+      <select className="select provider-select" value={provider} disabled={running} aria-label={tr("AIの切り替え")}
+              title={running ? tr("応答生成中は切り替えできません") : tr("使用するAI")}
               onChange={(e) => {
                 const id = e.target.value;
                 if (id === provider) return;
@@ -43,34 +45,34 @@ export function ComposerControls() {
                 void actions.setDraft(id, conf?.default_model ?? "", conf?.default_effort ?? "");
               }}>
         {enabled.map((p) => (
-          <option key={p.id} value={p.id}>{p.name}</option>
+          <option key={p.id} value={p.id}>{tr(p.name)}</option>
         ))}
       </select>
-      <select className="select" value={state.draftModel} disabled={running} aria-label="モデル" onChange={(e) => {
+      <select className="select" value={state.draftModel} disabled={running} aria-label={tr("モデル")} onChange={(e) => {
         const model = e.target.value;
         const next = findModel(models, model);
         void actions.setDraft(provider, model, next?.efforts.includes(state.draftEffort) ? state.draftEffort : "");
       }}>
-        {provider === "codex" && <option value="">既定のモデル</option>}
-        {provider === "local" && <option value="">自動（最初のモデル）</option>}
-        {models.map((m) => <option key={m.id} value={m.id} title={m.description}>{m.name}{m.supports_images ? "" : "（画像非対応）"}</option>)}
+        {provider === "codex" && <option value="">{tr("既定のモデル")}</option>}
+        {provider === "local" && <option value="">{tr("自動（最初のモデル）")}</option>}
+        {models.map((m) => <option key={m.id} value={m.id} title={m.description}>{tr(m.name)}{m.supports_images ? "" : tr("（画像非対応）")}</option>)}
         {state.draftModel && !models.some((m) => m.id === state.draftModel) && <option value={state.draftModel}>{state.draftModel}</option>}
       </select>
       <select className="select effort" value={efforts.includes(state.draftEffort) ? state.draftEffort : ""}
-              disabled={running || !efforts.length} aria-label="思考レベル"
-              title={efforts.length ? "高い思考レベルほど時間とトークンを多く使います" : "このモデルは思考レベルの変更に対応していません"}
+              disabled={running || !efforts.length} aria-label={tr("思考レベル")}
+              title={efforts.length ? tr("高い思考レベルほど時間とトークンを多く使います") : tr("このモデルは思考レベルの変更に対応していません")}
               onChange={(e) => void actions.setDraft(provider, state.draftModel, e.target.value)}>
-        <option value="">思考: 既定{current?.default_effort ? `（${effortLabel(current.default_effort)}）` : ""}</option>
-        {efforts.map((effort) => <option key={effort} value={effort}>思考: {effortLabel(effort)}</option>)}
+        <option value="">{tr("既定")}{current?.default_effort ? `（${effortLabel(current.default_effort)}）` : ""}</option>
+        {efforts.map((effort) => <option key={effort} value={effort}>{effortLabel(effort)}</option>)}
       </select>
-      {state.draftMode !== "prompt" && <div className="composer-folder">
+      {state.draftMode === "modeling" && <div className="composer-folder">
         <button className="btn folder-picker" disabled={running || folderBusy || !project}
-                title={project?.work_dir || "作業フォルダは未指定でも利用できます"} onClick={() => void chooseFolder()}>
+                title={project?.work_dir || tr("作業フォルダは未指定でも利用できます")} onClick={() => void chooseFolder()}>
           {folderBusy ? <span className="spinner" /> : <Icon name="folder" size={14} />}
-          <span className="ellipsis">{project?.work_dir ? project.work_dir.split(/[\\/]/).pop() : "作業フォルダ（任意）"}</span>
+          <span className="ellipsis">{project?.work_dir ? project.work_dir.split(/[\\/]/).pop() : tr("作業フォルダ（任意）")}</span>
         </button>
         {project?.work_dir && (
-          <button className="icon-btn sm" disabled={running || folderBusy} title="作業フォルダの指定を解除"
+          <button className="icon-btn sm" disabled={running || folderBusy} title={tr("作業フォルダの指定を解除")}
                   onClick={async () => {
                     setFolderBusy(true);
                     try { await saveFolder(""); } finally { setFolderBusy(false); }

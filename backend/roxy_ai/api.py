@@ -12,6 +12,7 @@ import contextlib
 import hmac
 import logging
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -33,6 +34,7 @@ from .db import Database
 from .logs import op, tail
 from .mcp_monitor import BlenderMonitor
 from .unreal_monitor import UnrealMonitor
+from .extra_mcp import ExtraMcpMonitor
 from .model_download import DownloadManager
 from .path_dialog import select_path
 
@@ -82,6 +84,8 @@ class State:
         self.chat = ChatService(self.db, self.settings, paths, self.adapters, self.attachments, self.monitor,
                                 self.hub.publish)
         self.chat.unreal = self.unreal
+        self.extra = ExtraMcpMonitor(self.settings, self.hub.publish)
+        self.chat.extra = self.extra
 
     def _prune_previews(self, keep_id: str, keep: int = 5) -> None:
         rows = [r for r in self.db._all("SELECT * FROM attachments WHERE kind='preview' ORDER BY created_at DESC")]
@@ -116,7 +120,7 @@ class ConversationCreate(BaseModel):
     provider: str
     model: str = ""
     effort: str = ""
-    mode: Literal["modeling", "prompt"] = "modeling"
+    mode: Literal["modeling", "prompt", "design_prompt"] = "modeling"
 
 
 class ConversationPatch(BaseModel):
@@ -185,6 +189,21 @@ class RefreshBody(BaseModel):
     preview: bool = True
 
 
+def _check_extra_mcp(conf: Any, settings: dict) -> None:
+    """Server names become MCP tool prefixes, so they must be simple and unique."""
+    if not isinstance(conf, dict) or not isinstance(conf.get("servers", []), list):
+        raise HTTPException(422, "extra_mcp.servers must be a list")
+    taken = {settings["mcp"].get("server_name") or "blender",
+             (settings.get("unreal") or {}).get("server_name") or "unreal-mcp"}
+    for entry in conf.get("servers", []):
+        name = entry.get("name") if isinstance(entry, dict) else None
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", name):
+            raise HTTPException(422, f"MCPサーバー名「{name}」は英数字・-・_ の1〜40文字にしてください。")
+        if name in taken:
+            raise HTTPException(422, f"MCPサーバー名「{name}」は重複しています。")
+        taken.add(name)
+
+
 def create_app(paths: Paths, token: str, port: int = 0) -> FastAPI:
     state = State(paths, token)
 
@@ -198,6 +217,7 @@ def create_app(paths: Paths, token: str, port: int = 0) -> FastAPI:
         project = state.active_project()
         await state.monitor.start(project["blender_host"], project["blender_port"])
         await state.unreal.start()
+        await state.extra.start()
         op("app.start", version=__version__)
         yield
         op("app.stop")
@@ -211,6 +231,7 @@ def create_app(paths: Paths, token: str, port: int = 0) -> FastAPI:
                 logger.warning("adapter shutdown: %s", e)
         await state.monitor.stop()
         await state.unreal.stop()
+        await state.extra.stop()
         state.db.close()
 
     app = FastAPI(title="Roxy AI backend", version=__version__, lifespan=lifespan)
@@ -294,6 +315,7 @@ def create_app(paths: Paths, token: str, port: int = 0) -> FastAPI:
             "providers": [{"id": a.id, "name": a.name} for a in state.adapters.values()],
             "blender": state.monitor.public_state(),
             "unreal": state.unreal.public_state(),
+            "extra_mcp": state.extra.public_state(),
             "runs": state.chat.active_runs(),
             "data_dir": str(paths.root),
         }
@@ -304,11 +326,19 @@ def create_app(paths: Paths, token: str, port: int = 0) -> FastAPI:
 
     @app.patch("/api/settings")
     async def patch_settings(patch: dict[str, Any]):
+        if "ui" in patch and not isinstance(patch["ui"], dict):
+            raise HTTPException(422, "ui must be an object")
+        if "language" in patch.get("ui", {}) and patch["ui"]["language"] not in ("ja", "en"):
+            raise HTTPException(422, "Supported languages: ja, en")
         patch.pop("last_project_id", None)
+        if "extra_mcp" in patch:
+            _check_extra_mcp(patch["extra_mcp"], state.settings.get())
         before = state.settings.get()
         after = state.settings.update(patch)
         if before.get("unreal") != after.get("unreal"):
             await state.unreal.start()
+        if before.get("extra_mcp") != after.get("extra_mcp"):
+            await state.extra.start()
         if before["mcp"] != after["mcp"]:
             project = state.active_project()
             await state.monitor.start(project["blender_host"], project["blender_port"])
@@ -618,6 +648,7 @@ def create_app(paths: Paths, token: str, port: int = 0) -> FastAPI:
         state.hub.clients.add(queue)
         await socket.send_json({"type": "hello", "blender": state.monitor.public_state(),
                                 "unreal": state.unreal.public_state(),
+                                "extra_mcp": state.extra.public_state(),
                                 "runs": state.chat.active_runs()})
 
         async def pump():

@@ -34,7 +34,7 @@ export interface Conversation {
   provider: ProviderId;
   model: string;
   effort: string; // thinking level, "" = model default
-  mode: "modeling" | "prompt";
+  mode: "modeling" | "prompt" | "design_prompt";
   brief: ModelingBrief;
   draft?: { text?: string; attachment_ids?: string[] };
   created_at: number;
@@ -204,7 +204,8 @@ export interface Settings {
   };
   approval: { auto_approve_readonly_mcp: boolean; auto_approve_blender_mcp: boolean; full_access: boolean };
   context: { handoff_max_chars: number };
-  ui: { right_panel_open: boolean; sidebar_open: boolean };
+  extra_mcp?: { servers: ExtraMcpServer[]; auto_detected: string[] };
+  ui: { right_panel_open: boolean; sidebar_open: boolean; language: "ja" | "en" };
   last_project_id: string | null;
 }
 
@@ -217,6 +218,7 @@ export interface Bootstrap {
   providers: { id: ProviderId; name: string }[];
   blender: BlenderState;
   unreal?: UnrealState;
+  extra_mcp?: ExtraMcpState;
   runs: RunSnapshot[];
   data_dir: string;
 }
@@ -238,8 +240,9 @@ export interface SearchHit {
 }
 
 export type ServerEvent =
-  | { type: "hello"; blender: BlenderState; unreal?: UnrealState; runs: RunSnapshot[] }
+  | { type: "hello"; blender: BlenderState; unreal?: UnrealState; extra_mcp?: ExtraMcpState; runs: RunSnapshot[] }
   | { type: "unreal.state"; state: UnrealState }
+  | { type: "extra_mcp.state"; state: ExtraMcpState }
   | { type: "pong" }
   | { type: "blender.state"; state: BlenderState }
   | { type: "blender.tool_result"; conversation_id: string; tool_call: ToolCall }
@@ -257,6 +260,28 @@ export type ServerEvent =
   | { type: "run.finished"; conversation_id: string; run_id: string; status: string; error: string }
   | { type: "approval.request"; approval: Approval }
   | { type: "approval.resolved"; id: string; conversation_id: string };
+
+/** Another MCP server handed to the AIs (backend/roxy_ai/extra_mcp.py). */
+export interface ExtraMcpServer {
+  name: string;
+  label?: string;
+  enabled?: boolean;
+  server_dir?: string;
+  script?: string;
+  command?: string;
+  args?: string[];
+  url?: string;
+  probe_host?: string;
+  probe_port?: number | null;
+  read_only_prefixes?: string[];
+  auto_approve_readonly?: boolean;
+  auto_approve_all?: boolean;
+  prompt?: string;
+  offline_hint?: string;
+}
+
+/** Server name -> whether the app it drives answers on its port. */
+export type ExtraMcpState = Record<string, "connected" | "offline">;
 
 /** Unreal Editor MCP connection, as reported by backend/roxy_ai/unreal_monitor.py. */
 export interface UnrealState {

@@ -9,12 +9,13 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from roxy_ai.adapters.base import ToolEnd, ToolStart
+from roxy_ai.adapters.base import RunResult, TextDelta, ToolEnd, ToolStart
 from roxy_ai.adapters.codex import CodexAdapter
 from roxy_ai.api import create_app
 from roxy_ai.attachments import MAX_UPLOAD
 from roxy_ai.chat import Run
 from roxy_ai.config import Paths
+from test_prompt_chat import PromptAdapter
 
 
 def test_tool_image_is_previewed_without_saving(tmp_path):
@@ -88,3 +89,45 @@ def test_codex_image_generation_emits_preview_bytes():
         turn.emit.reset_mock()
         asyncio.run(adapter._item_completed(turn, {**item, "result": result, "failure": failure}))
         assert not turn.emit.call_args.args[0].ok
+
+
+def test_design_chat_image_generation_reaches_preview_without_blender(tmp_path, monkeypatch):
+    buffer = io.BytesIO()
+    Image.new("RGB", (20, 20), "blue").save(buffer, "PNG")
+    data = buffer.getvalue()
+
+    class ImageAdapter(PromptAdapter):
+        async def run(self, req, emit, approve):
+            self.requests.append(req)
+            item = {"type": "imageGeneration", "id": "sheet", "status": "completed",
+                    "revisedPrompt": "装飾本の四面図、高さ25cm", "result": base64.b64encode(data).decode()}
+            adapter = object.__new__(CodexAdapter)
+            turn = SimpleNamespace(emit=emit)
+            await emit(TextDelta('```roxy-brief\n{"target":"装飾本","dimensions":"高さ25cm"}\n```'))
+            await adapter._item_started(turn, item)
+            await adapter._item_completed(turn, item)
+            return RunResult("sheet-session", "completed")
+
+    (tmp_path / "settings.json").write_text(json.dumps({"mcp": {"monitor_enabled": False}, "approval": {"full_access": True}}), encoding="utf-8")
+    app = create_app(Paths(tmp_path), "t")
+    state = app.state.roxy
+    adapter = ImageAdapter()
+    state.adapters["codex"] = adapter
+    monkeypatch.setattr(state.monitor, "ensure_installed", AsyncMock(side_effect=AssertionError("Blender must not be prepared")))
+    headers = {"Authorization": "Bearer t"}
+    with TestClient(app) as client, client.websocket_connect("/ws?t=t") as ws:
+        ws.receive_json()
+        conv = client.post("/api/conversations", json={"project_id": state.active_project()["id"], "provider": "codex", "mode": "design_prompt"}, headers=headers).json()
+        result = client.post(f"/api/conversations/{conv['id']}/messages", json={"provider": "codex", "text": "高さ25cmの装飾本の設定画を生成して"}, headers=headers)
+        assert result.status_code == 200
+        while ws.receive_json()["type"] != "run.finished":
+            pass
+        req = adapter.requests[0]
+        assert req.image_generation and req.prompt_only and req.mcp_servers == {} and not req.full_access
+        detail = client.get(f"/api/conversations/{conv['id']}", headers=headers).json()
+        assert detail["conversation"]["brief"] == {"target": "装飾本", "dimensions": "高さ25cm"}
+        message = detail["messages"][-1]
+        assert message["status"] == "complete" and message["meta"]["brief"] == detail["conversation"]["brief"]
+        tool = message["tool_calls"][0]
+        assert tool["name"] == "image_generation" and tool["status"] == "ok" and len(tool["images"]) == 1
+        assert client.get(f"/api/attachments/{tool['images'][0]}/file", headers=headers).content == data

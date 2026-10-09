@@ -1,3 +1,4 @@
+import { t as tr } from "../lib/i18n";
 import { useEffect, useState } from "react";
 import { useStore, type Toast } from "../lib/store";
 import { cx } from "../lib/format";
@@ -26,13 +27,13 @@ export function Toasts() {
       {shown.map((t) => (
         <div key={t.id} className={cx("toast", t.kind, t.leaving && "leaving")} inert={t.leaving}>
           <Icon name={t.kind === "error" ? "alert" : t.kind === "success" ? "check" : "chevron"} />
-          <span className="toast-text">{t.text}</span>
+          <span className="toast-text">{tr(t.text)}</span>
           {t.action && (
             <button className="link-btn" onClick={t.action.run}>
-              {t.action.label}
+              {tr(t.action.label)}
             </button>
           )}
-          <button className="icon-btn sm" onClick={() => dispatch({ type: "untoast", id: t.id })} title="閉じる">
+          <button className="icon-btn sm" onClick={() => dispatch({ type: "untoast", id: t.id })} title={tr("閉じる")}>
             <Icon name="x" />
           </button>
         </div>

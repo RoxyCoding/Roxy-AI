@@ -1,3 +1,4 @@
+import { t as tr, locale } from "../lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { get } from "../lib/backend";
 import { providerName, useStore } from "../lib/store";
@@ -25,12 +26,12 @@ interface UsageInfo {
 const REFRESH_MS = 5 * 60 * 1000;
 
 function resetLabel(w: UsageWindow): string {
-  if (!w.resets_at) return w.reset_text ? `リセット: ${w.reset_text}` : "";
+  if (!w.resets_at) return w.reset_text ? tr`リセット: ${w.reset_text}` : "";
   const at = new Date(w.resets_at * 1000);
   const mins = Math.max(0, Math.round((w.resets_at * 1000 - Date.now()) / 60000));
-  const left = mins >= 1440 ? `${Math.floor(mins / 1440)}日${Math.floor((mins % 1440) / 60)}時間` : mins >= 60 ? `${Math.floor(mins / 60)}時間${mins % 60}分` : `${mins}分`;
-  const when = at.toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  return `${when} にリセット（あと${left}）`;
+  const left = mins >= 1440 ? tr`${Math.floor(mins / 1440)}日${Math.floor((mins % 1440) / 60)}時間` : mins >= 60 ? tr`${Math.floor(mins / 60)}時間${mins % 60}分` : tr`${mins}分`;
+  const when = at.toLocaleString(locale(), { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return tr`${when} にリセット（あと${left}）`;
 }
 
 /** Remaining = 100 - used. The tightest window is what limits you next. */
@@ -94,17 +95,17 @@ export function UsageBadge() {
     <div className="usage" ref={box}>
       <button
         className={cx("pill usage-pill", remaining !== null && level(remaining))}
-        title="残り利用枠（クリックで詳細）"
+        title={tr("残り利用枠（クリックで詳細）")}
         onClick={() => setOpen((v) => !v)}
       >
         <span className="dot" />
-        {providerName(state, current.provider)} 残り{remaining !== null ? `${Math.round(remaining)}%` : "—"}
+        {providerName(state, current.provider)} {tr("残り")}{remaining !== null ? `${Math.round(remaining)}%` : "—"}
       </button>
       {open && (
         <div className="usage-pop">
           <div className="row between">
-            <span className="strong">残り利用枠</span>
-            <button className="icon-btn sm" title="更新" disabled={loading} onClick={() => void load(true)}>
+            <span className="strong">{tr("残り利用枠")}</span>
+            <button className="icon-btn sm" title={tr("更新")} disabled={loading} onClick={() => void load(true)}>
               {loading ? <span className="spinner" /> : <Icon name="refresh" size={13} />}
             </button>
           </div>
@@ -117,7 +118,7 @@ export function UsageBadge() {
                   <div key={win.key} className="usage-window">
                     <div className="row between small">
                       <span>{win.label}</span>
-                      <span className={cx("usage-rem", level(rem))}>残り {Math.round(rem)}%</span>
+                      <span className={cx("usage-rem", level(rem))}>{tr("残り")}{Math.round(rem)}%</span>
                     </div>
                     <div className="download-bar"><span className={level(rem)} style={{ width: `${rem}%` }} /></div>
                     <div className="muted small">{resetLabel(win)}</div>
@@ -130,8 +131,7 @@ export function UsageBadge() {
             </div>
           ))}
           <div className="muted small">
-            {new Date(Math.max(...usage.map((u) => u.fetched_at)) * 1000).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })} 時点
-          </div>
+            {new Date(Math.max(...usage.map((u) => u.fetched_at)) * 1000).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" })} {tr("時点")}</div>
         </div>
       )}
     </div>

@@ -1,14 +1,16 @@
+import { t as tr } from "./i18n";
+import { locale } from "./i18n";
 export function relativeTime(ts: number): string {
   const diff = Date.now() / 1000 - ts;
-  if (diff < 60) return "たった今";
-  if (diff < 3600) return `${Math.floor(diff / 60)}分前`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}時間前`;
-  if (diff < 86400 * 7) return `${Math.floor(diff / 86400)}日前`;
-  return new Date(ts * 1000).toLocaleDateString("ja-JP");
+  if (diff < 60) return tr("たった今");
+  if (diff < 3600) return tr`${Math.floor(diff / 60)}分前`;
+  if (diff < 86400) return tr`${Math.floor(diff / 3600)}時間前`;
+  if (diff < 86400 * 7) return tr`${Math.floor(diff / 86400)}日前`;
+  return new Date(ts * 1000).toLocaleDateString(locale());
 }
 
 export function clockTime(ts: number): string {
-  return new Date(ts * 1000).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+  return new Date(ts * 1000).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
 }
 
 export function fileSize(n: number): string {
@@ -29,7 +31,7 @@ export function pretty(v: unknown): string {
 
 export function seconds(from: number, to?: number | null): string {
   const s = Math.max(0, (to ?? Date.now() / 1000) - from);
-  return s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)}秒` : `${Math.floor(s / 60)}分${Math.floor(s % 60)}秒`;
+  return s < 60 ? tr`${s.toFixed(s < 10 ? 1 : 0)}秒` : tr`${Math.floor(s / 60)}分${Math.floor(s % 60)}秒`;
 }
 
 export function cx(...names: (string | false | null | undefined)[]): string {
@@ -49,7 +51,7 @@ const EFFORT_LABELS: Record<string, string> = {
 
 /** Display name for a thinking/reasoning level reported by the AI CLI. */
 export function effortLabel(effort: string): string {
-  return EFFORT_LABELS[effort] ?? effort;
+  return tr(EFFORT_LABELS[effort] ?? effort);
 }
 
 /** The model entry for `model`; "" or "default" means the provider's default model. */

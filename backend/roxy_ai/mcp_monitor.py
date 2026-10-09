@@ -27,6 +27,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from .config import SettingsStore
+from .mcp_install import MCPInstaller
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,7 @@ class BlenderMonitor:
                  publish: Callable[[dict], Awaitable[None]],
                  save_image: Callable[[bytes, str, str], Awaitable[dict]]):
         self._settings = settings
+        self._installer = MCPInstaller(settings, log_dir.parent)
         self._log_dir = log_dir
         self._publish = publish
         self._save_image = save_image
@@ -190,14 +192,22 @@ class BlenderMonitor:
     def public_state(self) -> dict:
         return dict(self.state)
 
+    async def ensure_installed(self) -> None:
+        try:
+            await self._installer.ensure()
+        except Exception as e:
+            raise RuntimeError(f"Blender MCPを自動導入できませんでした。ネット接続と保存先を確認してください: {e}") from e
+
     async def _run(self) -> None:
         backoff = 2.0
+        try:
+            await self.ensure_installed()
+        except Exception as e:
+            await self._set(mcp="error", error=str(e))
+            return
         settings = self._settings.get()
         server_dir = settings["mcp"].get("server_dir") or ""
         cmd = mcp_server_command(settings, self._host, self._port)
-        if not settings["mcp"].get("command") and not (server_dir and Path(server_dir, "pyproject.toml").is_file()):
-            await self._set(mcp="error", error="Roxy-BlenderMCP-v2 のフォルダが見つかりません（設定 → Blender MCP）。")
-            return
         while not self._stop.is_set():
             errlog = open(self._log_dir / "mcp_monitor.log", "a", encoding="utf-8")
             try:

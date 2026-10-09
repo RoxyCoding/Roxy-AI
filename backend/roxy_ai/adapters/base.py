@@ -114,6 +114,7 @@ class RunRequest:
     mcp_servers: dict[str, dict] = field(default_factory=dict)  # name -> {command, args, env}
     extra_dirs: list[str] = field(default_factory=list)
     prompt_only: bool = False
+    image_generation: bool = False  # allow native image generation in an otherwise restricted chat
     full_access: bool = False  # no approvals, no sandbox (user opted in)
 
 

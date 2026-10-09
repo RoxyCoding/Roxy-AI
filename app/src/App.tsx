@@ -1,3 +1,5 @@
+import { t as tr } from "./lib/i18n";
+import { useLanguage } from "./lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { discoverBackend, get, restartBackend } from "./lib/backend";
 import { StoreProvider, useStore } from "./lib/store";
@@ -66,7 +68,7 @@ function Shell() {
         {panel.value && <RightPanel exiting={panel.exiting} onClose={togglePanel} onSettings={(tab) => setSettingsTab(tab)} />}
         {sidebar.value && <div className={cx("scrim mobile-only", sidebar.exiting && "slide-out")} inert={sidebar.exiting} onClick={toggleSidebar} />}
       </div>
-      {!state.wsConnected && <div className="offline-banner">バックエンドと再接続しています…</div>}
+      {!state.wsConnected && <div className="offline-banner">{tr("バックエンドと再接続しています…")}</div>}
       <ApprovalDialog />
       {settings.value && <SettingsDialog exiting={settings.exiting} initialTab={settings.value} onClose={() => setSettingsTab(null)} />}
       <Toasts />
@@ -76,6 +78,7 @@ function Shell() {
 }
 
 export default function App() {
+  useLanguage();
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -102,7 +105,7 @@ export default function App() {
       <div className="splash">
         <div className="splash-card">
           <img className="brand-icon" src="/roxy-icon.png" alt="Roxy" />
-          <h1>バックエンドに接続できません</h1>
+          <h1>{tr("バックエンドに接続できません")}</h1>
           <p className="muted">{error}</p>
           <div className="row gap">
             <button
@@ -112,8 +115,7 @@ export default function App() {
                 setAttempt((n) => n + 1);
               }}
             >
-              再起動して再試行
-            </button>
+              {tr("再起動して再試行")}</button>
           </div>
         </div>
       </div>
@@ -124,7 +126,7 @@ export default function App() {
       <div className="splash">
         <div className="splash-card">
           <img className="brand-icon pulse" src="/roxy-icon.png" alt="Roxy" />
-          <p className="muted">Roxy AI を起動しています…</p>
+          <p className="muted">{tr("Roxy AI を起動しています…")}</p>
         </div>
       </div>
     );

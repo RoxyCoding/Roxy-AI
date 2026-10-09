@@ -19,6 +19,22 @@ $bin = "$root\app\src-tauri\binaries"
 $flags = "$root\backend\roxy_ai\_build_flags.py"
 $thumb = $env:ROXY_SIGN_THUMBPRINT
 $timestamp = if ($env:ROXY_SIGN_TIMESTAMP) { $env:ROXY_SIGN_TIMESTAMP } else { "http://timestamp.digicert.com" }
+
+# Windows locks running executables; check before PyInstaller or Tauri overwrites them.
+$buildFiles = @("$root\backend\build\dist\roxy-ai-backend.exe", "$bin\roxy-ai-backend-x86_64-pc-windows-msvc.exe")
+if (-not $env:ROXY_SKIP_TAURI) {
+    $buildFiles += "$root\app\src-tauri\target\release\roxy-ai-backend.exe", "$root\app\src-tauri\target\release\roxy-blender-ai.exe"
+}
+foreach ($buildFile in $buildFiles) {
+    if (Test-Path -LiteralPath $buildFile -PathType Leaf) {
+        try {
+            $handle = [System.IO.File]::Open($buildFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+            $handle.Dispose()
+        } catch {
+            throw "Cannot update build file: $buildFile. Close Roxy AI running from this checkout and its backend, then run scripts\build.ps1 again. Windows error: $($_.Exception.GetBaseException().Message)"
+        }
+    }
+}
 New-Item -ItemType Directory -Force $bin | Out-Null
 
 function Sign-File($path) {

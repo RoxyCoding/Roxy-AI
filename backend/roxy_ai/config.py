@@ -149,7 +149,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         },
     },
     "mcp": {
-        "server_dir": "",  # Roxy-BlenderMCP-v2 checkout; empty = auto-detect
+        "server_dir": "",  # detect an existing checkout, otherwise install into the app data folder
         "command": "",  # empty: uv run --directory <server_dir> roxy-blender-mcp
         "args": [],
         "server_name": "blender",
@@ -168,6 +168,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "monitor_enabled": True,
         "auto_preview": True,
     },
+    # Other MCP servers handed to the AIs (e.g. Substance 3D Painter); see extra_mcp.py.
+    # auto_detected: presets already added once, so deleting one does not bring it back.
+    "extra_mcp": {"servers": [], "auto_detected": []},
     "approval": {
         # Tools the MCP marks readOnlyHint never change the scene.
         "auto_approve_readonly_mcp": True,
@@ -180,7 +183,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "full_access": False,
     },
     "context": {"handoff_max_chars": 40000},
-    "ui": {"right_panel_open": True, "sidebar_open": True},
+    "ui": {"right_panel_open": True, "sidebar_open": True, "language": "ja"},
     "last_project_id": None,
 }
 
@@ -211,6 +214,12 @@ class SettingsStore:
         merged = _merge(DEFAULT_SETTINGS, data)
         if not merged["mcp"]["server_dir"]:
             merged["mcp"]["server_dir"] = _default_mcp_dir()
+        from .extra_mcp import detect_presets
+
+        extra = merged["extra_mcp"]
+        for entry in detect_presets(merged):
+            extra["servers"] = [*(extra.get("servers") or []), entry]
+            extra["auto_detected"] = [*(extra.get("auto_detected") or []), entry["name"]]
         return merged
 
     def get(self) -> dict:

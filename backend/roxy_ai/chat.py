@@ -34,6 +34,7 @@ from .context import PROVIDER_NAMES, plan_context, render_handoff
 from .db import Database, new_id
 from .logs import op
 from .mcp_monitor import BlenderMonitor, mcp_server_command
+from . import extra_mcp
 from .unreal_monitor import unreal_call_is_read_only
 from .workflow import ModelingBrief, ModelingProgress, REPORTS, visible_text
 
@@ -117,6 +118,7 @@ class ChatService:
         self.runs: dict[str, Run] = {}  # conversation id -> active run
         self.locks: dict[str, str] = {}  # blender endpoint -> conversation id
         self.unreal = None  # UnrealMonitor, set by the API
+        self.extra = None  # ExtraMcpMonitor, set by the API
         self._ue_preview_task: asyncio.Task | None = None
         self.session_allow: dict[str, set[str]] = {}
         self._preview_task: asyncio.Task | None = None
@@ -158,20 +160,73 @@ class ChatService:
             lines.append("現在 Unreal Editor には接続されていません。UE の操作が必要な場合は、エディタの起動をユーザーに依頼してください。")
         return lines
 
+    def _extra_prompt_lines(self) -> list[str]:
+        lines = []
+        for entry in extra_mcp.enabled_servers(self.settings.get()):
+            if entry.get("prompt"):
+                lines.append(entry["prompt"])
+            elif entry.get("label"):
+                lines.append(f"{entry['label']} の操作は MCP サーバー「{entry['name']}」のツールで行ってください。")
+            if (entry.get("offline_hint") and self.extra is not None
+                    and self.extra.status(entry["name"]) == "offline"):
+                lines.append(entry["offline_hint"])
+        return lines
+
     def _system_append(self, project: dict, mode: str = "modeling") -> str:
+        language = "English" if self.settings.get()["ui"].get("language") == "en" else "Japanese"
+        language_instruction = f"Respond in {language}, including questions and the final prompt, unless the user explicitly requests another language.\n"
+        if mode in ("prompt", "design_prompt"):
+            brief_instruction = (
+                '確定した条件が変わるたび、変更した項目だけを```roxy-briefのJSONブロックで報告してください。'
+                '使用できるキーはtarget（作るもの）、use（用途）、shape（形・構造）、dimensions（寸法）、materials（素材）、colors（色）です。'
+                '値は文字列、取り消した条件は空文字にしてください。未確定の候補を確定条件として登録しないでください。'
+                'このブロックは画面の条件一覧を更新するためのもので、本文で形式を説明しないでください。\n'
+            )
+        if mode == "design_prompt":
+            return (
+                language_instruction +
+                "あなたはRoxyの設定画制作アシスタントです。3Dモデリングで形状・比率・構造を読み取れる設定画（デザインシート）の条件相談、プロンプト作成、画像生成を行ってください。\n"
+                "対象、用途、デザイン、基本寸法、形状・構造、素材・色・質感、必要な細部を具体化してください。"
+                "質問は一度に2〜3個までに絞り、候補から選んでもらうときは質問ツール（AskUserQuestion / request_user_input）を使ってください。"
+                "未指定の条件は推奨案として示し、ユーザーが決めた条件を優先してください。\n"
+                "参考画像があれば特徴を読み取り、複数の参考画像や図に矛盾があれば、どれを基準にするか確認してください。"
+                "見えない部分を確定した事実として扱わず、補完案として示してください。\n"
+                "設定画の画像生成とプロンプトには次の内容を必ず含めてください。\n"
+                "1. 正面・背面・側面・上面の四面図。遠近感のない正投影で、共通の縮尺・向き・基準線に揃える。"
+                "小口・留め具などのある反対側面や底面・天地が必要な対象では、その図も追加する。\n"
+                "2. 少なくとも1つの基本寸法と単位、全体の幅・高さ・奥行きの比率。寸法が未定なら推奨値を仮寸法と明記する。"
+                "数値を決められない場合は、手や人物などの大きさの基準を別枠に添える。\n"
+                "3. 形が読み取りにくい細部の拡大図。留め具、蝶結び、角飾り、チャーム、薔薇などから対象に必要な部分を選ぶ。\n"
+                "4. 接合構造が分かる図と注記。何が何にどう付くか、固定方法、重なり順、厚み、可動部分を示す。"
+                "実物の写真が添付されていれば構造の参考に使い、架空の写真を参考資料として挙げない。\n"
+                "5. 複雑な立体部分は斜め3方向からの補助図で奥行きを示す。計測用の正投影図とは別枠に配置する。\n"
+                "6. 部位ごとの素材・色・質感のメモ（真鍮、白い革、青いエナメルなど）。\n"
+                "7. 図どうしの整合性。同一の対象として輪郭、比率、厚み、装飾の位置・数、留め具、接合方法、配色を全図で統一する。"
+                "正面を基準図とし、背面などの固有の違いは明記する。拡大図にも全体図と同じ構造を描く。\n"
+                "8. 高解像度で細部を読み取れる、余白のある整理されたシート。各図に短いラベルを付け、図や寸法線を重ねない。"
+                "強いパース、形を隠す影や背景、小さく潰れた細部を避ける。\n" +
+                brief_instruction +
+                "ユーザーが画像の生成を依頼したら、条件を整理してimage_generationツールで実際に設定画を生成してください。"
+                "画像生成の依頼をプロンプトの提示だけで終えないでください。未指定の条件は推奨値を使い、仮寸法などの仮定を短く添えてください。"
+                "生成結果は画像コンテンツとして返し、チャット内でプレビュー表示してください。"
+                "修正を依頼されたら、元の設定画と確定条件を保って画像を修正してください。\n"
+                "プロンプトの作成だけを依頼された場合は、コピーできる設定画生成プロンプト全体を```textのコードブロックにまとめてください。"
+                "画像生成ツールが利用できない場合は、生成したと偽らず、Codexへの切り替えや利用条件の確認を案内してください。\n"
+                "このチャットでは設定画の相談・画像生成・プロンプト作成を行います。Blender操作やコマンド実行は行わないでください。"
+                "ユーザーが保存を明示的に依頼しない限り、生成画像を指定フォルダへ保存する作業は行わないでください。\n"
+                f"現在のプロジェクト: {project['name']}"
+            )
         if mode == "prompt":
             return (
-                "あなたはRoxyのモデリングプロンプト相談役です。日本語で、作るものの検討からBlender向けの制作指示まで相談に乗ってください。\n"
+                language_instruction +
+                "あなたはRoxyのモデリングプロンプト相談役です。作るものの検討からBlender向けの制作指示まで相談に乗ってください。\n"
                 "作るものが未定なら、用途・好み・難易度を確認し、具体的な候補を2〜3案提案してください。"
                 "確認する質問は一度に2〜3個までに絞ってください。参考画像や三面図があれば形状や特徴を読み取ってください。\n"
                 "候補から選んでもらうときは、質問ツール（AskUserQuestion / request_user_input）を使って選択肢を表示してください。\n"
                 "対象、用途、形状・構造、寸法・比率、材質・色・質感、必要な細部、品質、仕上げを相談して具体化してください。"
                 "未指定の条件は推奨案として示し、ユーザーが決めた条件を優先してください。\n"
-                '確定した条件が変わるたび、変更した項目だけを```roxy-briefのJSONブロックで報告してください。'
-                '使用できるキーはtarget（作るもの）、use（用途）、shape（形・構造）、dimensions（寸法）、materials（素材）、colors（色）です。'
-                '値は文字列、取り消した条件は空文字にしてください。未確定の候補を確定条件として登録しないでください。'
-                'このブロックは画面の条件一覧を更新するためのもので、本文で形式を説明しないでください。\n'
-                "条件がまとまったら、別のチャットに貼るだけで使える日本語のモデリングプロンプトを```textのコードブロックにまとめてください。"
+                + brief_instruction +
+                "条件がまとまったら、別のチャットに貼るだけで使えるモデリングプロンプトを```textのコードブロックにまとめてください。"
                 "その後の修正相談には、修正済みのプロンプト全体を提示してください。\n"
                 "このチャットでは相談とプロンプト作成だけを行います。Blender操作、画像生成、コマンド実行、ファイルの保存・変更は行わないでください。\n"
                 f"現在のプロジェクト: {project['name']}"
@@ -182,7 +237,8 @@ class ChatService:
             f"Blenderの操作・確認は MCP サーバー「{name}」(Roxy-BlenderMCP-v2) のツールで行い、"
             "そのサーバーが示す指示・ガイド・ルールに従ってください。",
             *self._unreal_prompt_lines(),
-            "ユーザーが別の言語で書かない限り、日本語で回答してください。",
+            *self._extra_prompt_lines(),
+            language_instruction,
             "現在の制作条件が添えられている場合は、その条件を制作の基準にしてください。"
             "引き継いだプロンプトや参考画像と食い違う場合も、制作条件を優先してください。"
             "ユーザーが今回のメッセージで明示的に条件の変更を依頼した場合は、その変更を優先してください。",
@@ -212,6 +268,10 @@ class ChatService:
         if ue.get("enabled", True) and ue.get("inject_into_ai", True) and ue.get("url"):
             # The UE MCP is an HTTP server inside Unreal Editor; AIs connect to it directly.
             servers[ue.get("server_name") or "unreal-mcp"] = {"url": ue["url"]}
+        for entry in extra_mcp.enabled_servers(s):
+            spec = extra_mcp.server_spec(entry)
+            if spec and entry["name"] not in servers:
+                servers[entry["name"]] = spec
         return servers
 
     def active_runs(self) -> list[dict]:
@@ -224,17 +284,24 @@ class ChatService:
             raise Conflict("MCPを再起動中です。完了してから送信してください。")
         if conversation_id in self.runs:
             raise Conflict("この会話は応答を生成中です。完了または中断してから送信してください。")
-        if (self.db.get_conversation(conversation_id) or {}).get("mode") == "prompt":
-            return f"prompt:{conversation_id}"
+        mode = (self.db.get_conversation(conversation_id) or {}).get("mode")
+        if mode in ("prompt", "design_prompt"):
+            return f"{mode}:{conversation_id}"
         keys = [self.endpoint(project)]
         ue = self.settings.get().get("unreal") or {}
         if ue.get("enabled", True) and ue.get("inject_into_ai", True) and ue.get("url"):
             keys.append(f"unreal:{ue['url']}")  # one AI at a time per Unreal Editor too
+        labels = {}
+        for entry in extra_mcp.enabled_servers(self.settings.get()):
+            if extra_mcp.server_spec(entry):  # and per app driven by an extra server
+                labels[f"extra:{entry['name']}"] = entry.get("label") or entry["name"]
+        keys += labels
         for key in keys:
             holder = self.locks.get(key)
             if holder and holder != conversation_id:
                 conv = self.db.get_conversation(holder) or {}
-                target = "Unreal Editor" if key.startswith("unreal:") else f"Blender（{key}）"
+                target = ("Unreal Editor" if key.startswith("unreal:")
+                          else labels.get(key) or f"Blender（{key}）")
                 raise Conflict(
                     f"同じ{target}に対して別の会話「{conv.get('title') or '無題'}」がAIを実行中です。"
                     "競合を防ぐため、完了または中断してから送信してください。"
@@ -348,9 +415,11 @@ class ChatService:
             supports_images = adapter.model_supports_images(run.model)
         prepared = self.attachments.prepare(attachments, supports_images=supports_images,
             mimes=adapter.image_mimes(), max_edge=adapter.max_image_edge(), provider_name=adapter.name)
+        language = "English" if self.settings.get()["ui"].get("language") == "en" else "Japanese"
         parts = ([InputPart("text", text=text)] if text.strip() else []) + prepared.parts
         if not parts:
             raise ValueError("送信できる添付ファイルがありません。添付し直してください。")
+        parts.insert(0, InputPart("text", text=f"The user selected {language} for replies. Respond in {language} unless explicitly asked otherwise."))
         await adapter.steer(run.conversation_id, parts)
         self.db.assign_attachments(attachment_ids, run.conversation_id)
         msg = self.db.add_message(run.conversation_id, "user", text, provider=run.provider,
@@ -393,7 +462,7 @@ class ChatService:
         branch, so they are dropped too and the next turn hands over the text."""
         self.db.delete_messages_from(conversation_id, seq)
         conv = self.db.get_conversation(conversation_id)
-        if conv["mode"] == "prompt":
+        if conv["mode"] in ("prompt", "design_prompt"):
             previous = next((m["meta"]["brief"] for m in reversed(self.db.list_messages(conversation_id)) if "brief" in m["meta"]), {})
             conv = self.db.update_conversation(conversation_id, {"brief": previous})
             await self.publish({"type": "conversation.updated", "conversation": conv})
@@ -430,7 +499,7 @@ class ChatService:
             if assistant is not None:
                 meta = {"notices": run.notices, "usage": run.usage, "duration": time.time() - run.started_at,
                         "effort": run.effort, "progress": run.progress}
-                if run.mode == "prompt":
+                if run.mode in ("prompt", "design_prompt"):
                     meta["brief"] = self.db.get_conversation(run.conversation_id)["brief"]
                 if result and result.model:
                     meta["resolved_model"] = result.model
@@ -455,6 +524,13 @@ class ChatService:
     async def _run_with_context(self, run: Run, user_msg: dict, project: dict, fresh: bool) -> RunResult:
         adapter = self.adapter(run.provider)
         settings = self.settings.get()
+        if run.mode == "modeling" and settings["mcp"].get("inject_into_ai", True):
+            await self._on_event(run, StatusUpdate("Blender MCPの準備を確認しています…"))
+            try:
+                await self.monitor.ensure_installed()
+            except RuntimeError as e:
+                raise AdapterUnavailable(str(e)) from e
+            settings = self.settings.get()
         messages = self.db.list_messages(run.conversation_id)
         session = None if fresh else self.db.get_ai_session(run.conversation_id, run.provider)
         session_id, ctx = plan_context(messages, session, user_msg["seq"])
@@ -486,7 +562,10 @@ class ChatService:
         )
         for n in prepared.notices:
             await self._notice(run, n)
-        parts: list[InputPart] = []
+        language = "English" if settings["ui"].get("language") == "en" else "Japanese"
+        parts: list[InputPart] = [InputPart("text", text=f"The user selected {language} for replies. Respond in {language} unless explicitly asked otherwise.")]
+        if run.mode == "design_prompt" and run.provider != "codex":
+            parts.append(InputPart("text", text="現在選択中のAIでは、このチャットで画像生成ツールを利用できません。条件相談とプロンプト作成には対応し、画像生成を依頼された場合はCodexへの切り替えを案内してください。"))
         if handoff:
             parts.append(InputPart("text", text=handoff))
         brief = self.db.get_conversation(run.conversation_id).get("brief") or {}
@@ -504,9 +583,10 @@ class ChatService:
             effort=effort,
             session_id=session_id,
             system_append=self._system_append(project, run.mode),
-            mcp_servers={} if run.mode == "prompt" else self._mcp_servers(project),
+            mcp_servers=self._mcp_servers(project) if run.mode == "modeling" else {},
             extra_dirs=[str(self.paths.attachments)],
-            prompt_only=run.mode == "prompt",
+            prompt_only=run.mode in ("prompt", "design_prompt"),
+            image_generation=run.mode == "design_prompt" and run.provider == "codex",
             full_access=self.full_access_for(run),
         )
         async def emit(ev):
@@ -535,7 +615,7 @@ class ChatService:
         if now - run.last_persist > PERSIST_EVERY:
             run.last_persist = now
             meta = {"progress": run.progress}
-            if run.mode == "prompt":
+            if run.mode in ("prompt", "design_prompt"):
                 meta["brief"] = self.db.get_conversation(run.conversation_id)["brief"]
             self.db.update_message(run.assistant_message_id, {"content": visible_text(run.text), "tool_calls": run.tool_calls,
                                                             "meta": meta})
@@ -544,7 +624,7 @@ class ChatService:
         for match in REPORTS.finditer(run.text, run.report_cursor):
             run.report_cursor = match.end()
             try:
-                if match[1] == "brief" and run.mode == "prompt":
+                if match[1] == "brief" and run.mode in ("prompt", "design_prompt"):
                     patch = ModelingBrief.model_validate_json(match[2]).model_dump(exclude_unset=True)
                     conv = self.db.get_conversation(run.conversation_id)
                     if patch and conv:
@@ -594,6 +674,8 @@ class ChatService:
                 await self.publish({"type": "blender.tool_result", "conversation_id": cid, "tool_call": tc})
                 if ev.ok and tc["tool"] == "call_tool":
                     self._schedule_unreal_preview()
+            elif extra_mcp.find(self.settings.get(), tc["server"]):
+                await self.publish({"type": "blender.tool_result", "conversation_id": cid, "tool_call": tc})
             await self._persist_partial(run)
         elif isinstance(ev, StatusUpdate):
             run.status_text = ev.text
@@ -639,12 +721,15 @@ class ChatService:
     # Approvals ---------------------------------------------------------------------
 
     def full_access_for(self, run: Run) -> bool:
-        """Full access applies to normal chats only, never to the read-only prompt chat."""
-        return run.mode != "prompt" and bool(self.settings.get()["approval"].get("full_access"))
+        """Full access never applies to the read-only prompt chats."""
+        return run.mode not in ("prompt", "design_prompt") and bool(self.settings.get()["approval"].get("full_access"))
 
     async def _approve(self, run: Run, req: ApprovalRequest) -> ApprovalDecision:
-        if run.mode == "prompt" and req.kind != "question":
-            return ApprovalDecision(allow=False, message="このチャットでは相談とプロンプト作成だけを行ってください。")
+        if run.mode == "design_prompt" and req.kind == "tool" and req.tool_name == "image_generation" and not req.server:
+            return ApprovalDecision(allow=True)
+        if run.mode in ("prompt", "design_prompt") and req.kind != "question":
+            message = "このチャットでは設定画の相談・画像生成・プロンプト作成だけを行ってください。" if run.mode == "design_prompt" else "このチャットでは相談とプロンプト作成だけを行ってください。"
+            return ApprovalDecision(allow=False, message=message)
         if self.full_access_for(run) and req.kind != "question" and not (req.schema or {}).get("properties"):
             # Questions and input forms still need the user's answer; everything else runs.
             op("approval.full_access", conversation=run.conversation_id, kind=req.kind, title=req.title)
@@ -669,6 +754,12 @@ class ChatService:
                         req.read_only and s["approval"].get("auto_approve_unreal_readonly", True)):
                     op("approval.auto", conversation=run.conversation_id, tool=req.tool_name,
                        inner=(req.input or {}).get("tool_name") if isinstance(req.input, dict) else None)
+                    return ApprovalDecision(allow=True)
+            entry = extra_mcp.find(s, server)
+            if entry:
+                req.read_only = extra_mcp.is_read_only(entry, tool)
+                if entry.get("auto_approve_all") or (req.read_only and entry.get("auto_approve_readonly", True)):
+                    op("approval.auto", conversation=run.conversation_id, tool=req.tool_name)
                     return ApprovalDecision(allow=True)
         elif req.kind == "mcp_elicitation" and key in allowed and not req.schema:
             return ApprovalDecision(allow=True)

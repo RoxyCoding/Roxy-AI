@@ -1,9 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useReducer, useRef, type ReactNode } from "react";
+import { t as tr } from "./i18n";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useReducer, useRef, type ReactNode } from "react";
+import { setLanguage } from "./i18n";
 import { EventSocket, del, get, patch, post } from "./backend";
 import type {
   Approval,
   BlenderState,
   UnrealState,
+  ExtraMcpState,
   Bootstrap,
   Conversation,
   ConversationDetail,
@@ -39,6 +42,7 @@ export interface State {
   approvals: Approval[];
   blender: BlenderState;
   unreal: UnrealState;
+  extraMcp: ExtraMcpState;
   providers: ProviderStatus[];
   providersLoading: boolean;
   mcpResults: (ToolCall & { conversation_id: string })[];
@@ -80,6 +84,7 @@ function onEvent(s: State, ev: ServerEvent): State {
         ...s,
         blender: ev.blender,
         unreal: ev.unreal ?? s.unreal,
+        extraMcp: ev.extra_mcp ?? s.extraMcp,
         runs: Object.fromEntries(ev.runs.map((r) => [r.conversation_id, r])),
         approvals: ev.runs.flatMap((r) => r.approvals),
       };
@@ -87,6 +92,8 @@ function onEvent(s: State, ev: ServerEvent): State {
       return { ...s, blender: ev.state };
     case "unreal.state":
       return { ...s, unreal: ev.state };
+    case "extra_mcp.state":
+      return { ...s, extraMcp: ev.state };
     case "blender.tool_result":
       return { ...s, mcpResults: [{ ...ev.tool_call, conversation_id: ev.conversation_id }, ...s.mcpResults].slice(0, 30) };
     case "conversation.updated": {
@@ -119,7 +126,7 @@ function onEvent(s: State, ev: ServerEvent): State {
     case "run.delta": {
       const r = s.runs[ev.conversation_id];
       if (!r) return s;
-      return { ...s, runs: { ...s.runs, [ev.conversation_id]: { ...r, text: r.text + ev.text, status_text: "応答中…" } } };
+      return { ...s, runs: { ...s.runs, [ev.conversation_id]: { ...r, text: r.text + ev.text, status_text: tr("応答中…") } } };
     }
     case "run.tool": {
       const r = s.runs[ev.conversation_id];
@@ -225,6 +232,7 @@ function initial(boot: Bootstrap): State {
     approvals: boot.runs.flatMap((r) => r.approvals),
     blender: boot.blender,
     unreal: boot.unreal ?? { status: "disabled", url: "", error: "", toolsets: [], editor: null, preview: null, updated_at: 0 },
+    extraMcp: boot.extra_mcp ?? {},
     providers: [],
     providersLoading: false,
     mcpResults: [],
@@ -279,7 +287,10 @@ function useActions(state: State, dispatch: React.Dispatch<Action>) {
       if (!id) {
         const s = stateRef.current;
         dispatch({ type: "open", id: null, detail: null });
-        dispatch({ type: "draft", provider: s.draftProvider, model: s.draftModel, effort: s.draftEffort, mode });
+        const provider = mode === "design_prompt" && s.settings.providers.codex?.enabled !== false ? "codex" : s.draftProvider;
+        const conf = s.settings.providers[provider];
+        dispatch({ type: "draft", provider, model: provider === s.draftProvider ? s.draftModel : conf?.default_model ?? "",
+          effort: provider === s.draftProvider ? s.draftEffort : conf?.default_effort ?? "", mode });
         return;
       }
       const detail = await guard(() => get<ConversationDetail>(`/api/conversations/${id}`));
@@ -410,8 +421,8 @@ function useActions(state: State, dispatch: React.Dispatch<Action>) {
     async (id: string, format: "md" | "json") => {
       const res = await guard(() => post<{ path: string }>(`/api/conversations/${id}/export`, { format }));
       if (res)
-        toast(`エクスポートしました: ${res.path}`, "success", {
-          label: "フォルダを開く",
+        toast(tr`エクスポートしました: ${res.path}`, "success", {
+          label: tr("フォルダを開く"),
           run: () => void guard(() => post("/api/system/reveal", { path: res.path })),
         });
     },
@@ -465,6 +476,7 @@ const StoreContext = createContext<Ctx | null>(null);
 
 export function StoreProvider({ boot, children }: { boot: Bootstrap; children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, boot, initial);
+  useLayoutEffect(() => setLanguage(state.settings.ui.language ?? "ja"), [state.settings.ui.language]);
   const actions = useActions(state, dispatch);
   const currentRef = useRef<string | null>(null);
   currentRef.current = state.currentId;
@@ -474,7 +486,7 @@ export function StoreProvider({ boot, children }: { boot: Bootstrap; children: R
     const off1 = socket.on((ev) => {
       dispatch({ type: "event", ev });
       if (ev.type === "run.finished" && ev.status === "error" && ev.conversation_id !== currentRef.current) {
-        actions.toast(`別の会話でエラーが発生しました: ${ev.error}`, "error");
+        actions.toast(tr`別の会話でエラーが発生しました: ${ev.error}`, "error");
       }
     });
     let wasConnected = false;
@@ -508,5 +520,5 @@ export function useStore(): Ctx {
 }
 
 export function providerName(state: State, id: ProviderId): string {
-  return state.boot.providers.find((p) => p.id === id)?.name ?? id;
+  return tr(state.boot.providers.find((p) => p.id === id)?.name ?? id);
 }

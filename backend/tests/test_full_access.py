@@ -41,5 +41,6 @@ def test_full_access_never_applies_to_prompt_chat(tmp_path):
     service = SimpleNamespace(settings=_settings(tmp_path, full_access=True))
     assert ChatService.full_access_for(service, SimpleNamespace(mode="chat"))
     assert not ChatService.full_access_for(service, SimpleNamespace(mode="prompt"))
+    assert not ChatService.full_access_for(service, SimpleNamespace(mode="design_prompt"))
     service.settings.update({"approval": {"full_access": False}})
     assert not ChatService.full_access_for(service, SimpleNamespace(mode="chat"))

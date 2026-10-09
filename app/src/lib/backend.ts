@@ -1,3 +1,4 @@
+import { t as tr } from "./i18n";
 // Connection to the local Python backend.
 //
 // In the desktop app the Tauri shell starts the backend and hands us its port
@@ -29,7 +30,7 @@ export async function discoverBackend(timeoutMs = 60000): Promise<BackendInfo> {
     return info;
   }
   if (!isTauri()) {
-    throw new Error("バックエンドの接続先がありません。URL に ?port=…&token=… を指定してください（開発モード）。");
+    throw new Error(tr("バックエンドの接続先がありません。URL に ?port=…&token=… を指定してください（開発モード）。"));
   }
   const { invoke } = await import("@tauri-apps/api/core");
   const started = Date.now();
@@ -42,7 +43,7 @@ export async function discoverBackend(timeoutMs = 60000): Promise<BackendInfo> {
     }
     await new Promise((r) => setTimeout(r, 250));
   }
-  throw new Error("バックエンドの起動がタイムアウトしました。ログを確認してください。");
+  throw new Error(tr("バックエンドの起動がタイムアウトしました。ログを確認してください。"));
 }
 
 export async function restartBackend(): Promise<void> {
@@ -74,7 +75,7 @@ export async function api<T = unknown>(path: string, init: RequestInit & { json?
   try {
     res = await fetch(base() + path, { ...init, body, headers: { ...headers, ...(init.headers as object) } });
   } catch {
-    throw new ApiError(0, "バックエンドに接続できません");
+    throw new ApiError(0, tr("バックエンドに接続できません"));
   }
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;

@@ -1,3 +1,4 @@
+import { t as tr } from "../lib/i18n";
 import { useState } from "react";
 import { fileUrl } from "../lib/backend";
 import type { ToolCall } from "../lib/types";
@@ -28,9 +29,9 @@ export function ToolCallRow({ tc, defaultOpen = false }: { tc: ToolCall; default
         <Icon name="tool" size={13} />
         <span className="tool-name ellipsis">{tc.name}</span>
         <span className="tool-meta">
-          {STATUS[tc.status]}
-          {tc.ended_at ? ` ・ ${seconds(tc.started_at, tc.ended_at)}` : ""}
-          {tc.images.length ? ` ・ 画像${tc.images.length}` : ""}
+          {tr(STATUS[tc.status])}
+          {tc.ended_at ? tr` ・ ${seconds(tc.started_at, tc.ended_at)}` : ""}
+          {tc.images.length ? tr` ・ 画像${tc.images.length}` : ""}
         </span>
         <Icon name={open ? "down" : "chevron"} size={12} />
       </button>
@@ -38,13 +39,13 @@ export function ToolCallRow({ tc, defaultOpen = false }: { tc: ToolCall; default
         <div className={cx("tool-body", body.exiting && "slide-out")} inert={body.exiting}>
           {input && input !== "{}" && (
             <>
-              <div className="tool-label">入力</div>
+              <div className="tool-label">{tr("入力")}</div>
               <pre className="tool-pre">{input}</pre>
             </>
           )}
           {tc.output && (
             <>
-              <div className="tool-label">結果</div>
+              <div className="tool-label">{tr("結果")}</div>
               <pre className="tool-pre">{tc.output}</pre>
             </>
           )}
@@ -53,8 +54,8 @@ export function ToolCallRow({ tc, defaultOpen = false }: { tc: ToolCall; default
       {tc.images.length > 0 && (
         <div className="thumbs tool-images">
           {tc.images.map((id) => (
-            <button key={id} className="icon-btn" title="画像を拡大" onClick={() => lightbox({ src: fileUrl(id), name: tc.name })}>
-              <img src={fileUrl(id, true)} alt="画像プレビュー" />
+            <button key={id} className="icon-btn" title={tr("画像を拡大")} onClick={() => lightbox({ src: fileUrl(id), name: tc.name })}>
+              <img src={fileUrl(id, true)} alt={tr("画像プレビュー")} />
             </button>
           ))}
         </div>
@@ -71,7 +72,7 @@ export function ToolCalls({ calls }: { calls: ToolCall[] }) {
     <div className="tools">
       {calls.length > 4 && (
         <button className="link-btn small" onClick={() => setExpanded((v) => !v)}>
-          {expanded ? "折りたたむ" : `ツール実行 ${calls.length}件をすべて表示`}
+          {expanded ? tr("折りたたむ") : tr`ツール実行 ${calls.length}件をすべて表示`}
         </button>
       )}
       {visible.map((tc) => (

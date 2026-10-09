@@ -1,3 +1,4 @@
+import { t as tr } from "../lib/i18n";
 import { useEffect, useState } from "react";
 import { post } from "../lib/backend";
 import { useStore } from "../lib/store";
@@ -55,15 +56,15 @@ function Questions({ a, sending, onDone }: { a: Approval; sending: boolean; onDo
           <label className="option">
             <input type={q.multi ? "checkbox" : "radio"} name={q.id} checked={(answers[q.id] ?? []).includes("__other__")}
                    onChange={() => toggle(q.id, "__other__", q.multi)} />
-            <input className="input" placeholder="その他（自由入力）" value={other[q.id] ?? ""}
+            <input className="input" placeholder={tr("その他（自由入力）")} value={other[q.id] ?? ""}
                    onFocus={() => !(answers[q.id] ?? []).includes("__other__") && toggle(q.id, "__other__", q.multi)}
                    onChange={(e) => setOther((p) => ({ ...p, [q.id]: e.target.value }))} />
           </label>
         </fieldset>
       ))}
       <div className="dialog-actions">
-        <button className="btn" disabled={sending} onClick={() => onDone(null)}>回答しない</button>
-        <button className="btn primary" disabled={sending || !ready} onClick={() => onDone(final())}>回答を送信</button>
+        <button className="btn" disabled={sending} onClick={() => onDone(null)}>{tr("回答しない")}</button>
+        <button className="btn primary" disabled={sending || !ready} onClick={() => onDone(final())}>{tr("回答を送信")}</button>
       </div>
     </>
   );
@@ -130,20 +131,20 @@ export function ApprovalDialog() {
     <div className="modal-scrim">
       <div className="dialog approval" role="dialog" aria-modal="true">
         <div className="dialog-head">
-          <span className="chip">{KIND_LABEL[a.kind]}</span>
-          {a.conversation_id !== state.currentId && conv && <span className="muted small">会話「{conv.title || "新しいチャット"}」</span>}
-          {state.approvals.length > 1 && <span className="muted small">ほか {state.approvals.length - 1} 件</span>}
+          <span className="chip">{tr(KIND_LABEL[a.kind])}</span>
+          {a.conversation_id !== state.currentId && conv && <span className="muted small">{tr("会話「")}{conv.title || tr("新しいチャット")}」</span>}
+          {state.approvals.length > 1 && <span className="muted small">{tr("ほか")}{state.approvals.length - 1} {tr("件")}</span>}
         </div>
         <h2 className="dialog-title">
-          {a.kind === "question" ? <Icon name="chevron" /> : <Icon name="tool" />} {a.title}
+          {a.kind === "question" ? <Icon name="chevron" /> : <Icon name="tool" />} {tr(a.title)}
         </h2>
         {a.server && a.kind !== "question" && (
           <p className="muted small">
-            MCPサーバー: <code>{a.server}</code>
-            {a.read_only && "（読み取り専用ツール）"}
+            {tr("MCPサーバー:")}<code>{a.server}</code>
+            {a.read_only && tr("（読み取り専用ツール）")}
           </p>
         )}
-        {a.detail && <p className="detail">{a.detail}</p>}
+        {a.detail && <p className="detail">{tr(a.detail)}</p>}
         {a.kind === "question" ? (
           <Questions key={a.id} a={a} sending={sending} onDone={(answers) => void respond(answers ? { allow: true, answers } : { allow: false })} />
         ) : (
@@ -154,24 +155,21 @@ export function ApprovalDialog() {
               input && input !== "{}" && input !== "null" && <pre className="tool-pre tall">{input}</pre>
             )}
             <div className="dialog-actions">
-              <button className="btn ghost danger" disabled={sending} onClick={() => void respond({ allow: false, cancel_turn: true })} title="拒否して応答生成も中断します">
-                中断
-              </button>
+              <button className="btn ghost danger" disabled={sending} onClick={() => void respond({ allow: false, cancel_turn: true })} title={tr("拒否して応答生成も中断します")}>
+                {tr("中断")}</button>
               <span className="grow" />
-              <button className="btn" disabled={sending} onClick={() => void respond({ allow: false, message: "ユーザーが拒否しました" })}>
-                拒否
-              </button>
+              <button className="btn" disabled={sending} onClick={() => void respond({ allow: false, message: tr("ユーザーが拒否しました") })}>
+                {tr("拒否")}</button>
               {a.allow_session && !hasForm && (
-                <button className="btn" disabled={sending} onClick={() => void respond({ allow: true, remember: true })} title="この会話の間、同じ操作は確認せずに許可します">
-                  この会話では常に許可
-                </button>
+                <button className="btn" disabled={sending} onClick={() => void respond({ allow: true, remember: true })} title={tr("この会話の間、同じ操作は確認せずに許可します")}>
+                  {tr("この会話では常に許可")}</button>
               )}
               <button
                 className="btn primary"
                 disabled={sending}
                 onClick={() => (hasForm ? document.getElementById("elicit-submit")?.click() : void respond({ allow: true }))}
               >
-                {hasForm ? "送信" : "許可"}
+                {hasForm ? tr("送信") : tr("許可")}
               </button>
             </div>
           </>

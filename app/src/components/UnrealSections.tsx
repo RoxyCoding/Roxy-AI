@@ -1,3 +1,4 @@
+import { t as tr } from "../lib/i18n";
 import { useState } from "react";
 import { fileUrl, post } from "../lib/backend";
 import { useStore } from "../lib/store";
@@ -11,15 +12,15 @@ import type { SettingsTab } from "./SettingsDialog";
 export function unrealBadge(u: UnrealState): { cls: string; label: string } {
   switch (u.status) {
     case "connected":
-      return { cls: "ok", label: u.editor?.pie ? "UE5 プレイ中" : "UE5接続中" };
+      return { cls: "ok", label: u.editor?.pie ? tr("UE5 プレイ中") : tr("UE5接続中") };
     case "connecting":
-      return { cls: "wait", label: "UE5接続処理中" };
+      return { cls: "wait", label: tr("UE5接続処理中") };
     case "waiting":
-      return { cls: "off", label: "UE5未起動" };
+      return { cls: "off", label: tr("UE5未起動") };
     case "error":
-      return { cls: "bad", label: "UE5エラー" };
+      return { cls: "bad", label: tr("UE5エラー") };
     default:
-      return { cls: "off", label: "UE5無効" };
+      return { cls: "off", label: tr("UE5無効") };
   }
 }
 
@@ -45,9 +46,9 @@ export function UnrealSections({ onSettings }: { onSettings: (tab: SettingsTab) 
   return (
     <>
       <Section
-        title="接続状況"
+        title={tr("接続状況")}
         right={
-          <button className="icon-btn sm" title="再接続" disabled={busy !== ""} onClick={() => void act("reconnect")}>
+          <button className="icon-btn sm" title={tr("再接続")} disabled={busy !== ""} onClick={() => void act("reconnect")}>
             {busy === "reconnect" ? <span className="spinner" /> : <Icon name="refresh" size={13} />}
           </button>
         }
@@ -56,44 +57,44 @@ export function UnrealSections({ onSettings }: { onSettings: (tab: SettingsTab) 
           <span className="dot" /> {badge.label}
         </div>
         <dl className="kv">
-          <dt>接続先</dt>
+          <dt>{tr("接続先")}</dt>
           <dd>{u.url || "—"}</dd>
         </dl>
         {u.status === "waiting" && (
-          <p className="muted small">Unreal Editor を起動し、MCP プラグイン（エディタ内 MCP サーバー）を有効にしてください。起動すると自動で接続します。</p>
+          <p className="muted small">{tr("Unreal Editor を起動し、MCP プラグイン（エディタ内 MCP サーバー）を有効にしてください。起動すると自動で接続します。")}</p>
         )}
         {u.status === "disabled" && (
-          <button className="btn small" onClick={() => onSettings("unreal")}>Unreal Engine の設定を開く</button>
+          <button className="btn small" onClick={() => onSettings("unreal")}>{tr("Unreal Engine の設定を開く")}</button>
         )}
-        {u.error && u.status !== "waiting" && <div className="error-text">{u.error}</div>}
+        {u.error && u.status !== "waiting" && <div className="error-text">{tr(u.error)}</div>}
       </Section>
 
       <Section
-        title="プレビュー"
+        title={tr("プレビュー")}
         right={
-          <button className="icon-btn sm" title="ビューポートを取得" disabled={!connected || busy !== ""} onClick={() => void act("preview")}>
+          <button className="icon-btn sm" title={tr("ビューポートを取得")} disabled={!connected || busy !== ""} onClick={() => void act("preview")}>
             {busy === "preview" ? <span className="spinner" /> : <Icon name="refresh" size={13} />}
           </button>
         }
       >
         {u.preview ? (
           <>
-            <img className="preview-img" src={fileUrl(u.preview.attachment_id)} alt="Unreal Editor ビューポート"
-                 onClick={() => lightbox({ src: fileUrl(u.preview!.attachment_id), name: "Unreal Editor ビューポート" })} />
-            <div className="muted small">{clockTime(u.preview.at)} に取得</div>
+            <img className="preview-img" src={fileUrl(u.preview.attachment_id)} alt={tr("Unreal Editor ビューポート")}
+                 onClick={() => lightbox({ src: fileUrl(u.preview!.attachment_id), name: tr("Unreal Editor ビューポート") })} />
+            <div className="muted small">{clockTime(u.preview.at)} {tr("に取得")}</div>
           </>
         ) : (
           <div className="placeholder">
             <Icon name="image" size={22} />
-            <span>{connected ? "更新ボタンでビューポートを取得します" : "Unreal Editor 接続後に表示できます"}</span>
+            <span>{connected ? tr("更新ボタンでビューポートを取得します") : tr("Unreal Editor 接続後に表示できます")}</span>
           </div>
         )}
       </Section>
 
       <Section
-        title="エディタの状態"
+        title={tr("エディタの状態")}
         right={
-          <button className="icon-btn sm" title="状態を更新" disabled={!connected || busy !== ""} onClick={() => void act("info")}>
+          <button className="icon-btn sm" title={tr("状態を更新")} disabled={!connected || busy !== ""} onClick={() => void act("info")}>
             {busy === "info" ? <span className="spinner" /> : <Icon name="refresh" size={13} />}
           </button>
         }
@@ -101,12 +102,12 @@ export function UnrealSections({ onSettings }: { onSettings: (tab: SettingsTab) 
         {u.editor ? (
           <>
             <dl className="kv">
-              <dt>レベル</dt>
+              <dt>{tr("レベル")}</dt>
               <dd>{u.editor.level || "—"}</dd>
-              <dt>プレイ</dt>
-              <dd>{u.editor.pie ? "PIE 実行中" : "停止中"}</dd>
-              <dt>選択</dt>
-              <dd>{u.editor.selected.length ? `${u.editor.selected.length} 件` : "なし"}</dd>
+              <dt>{tr("プレイ")}</dt>
+              <dd>{u.editor.pie ? tr("PIE 実行中") : tr("停止中")}</dd>
+              <dt>{tr("選択")}</dt>
+              <dd>{u.editor.selected.length ? tr`${u.editor.selected.length} 件` : tr("なし")}</dd>
             </dl>
             {u.editor.selected.length > 0 && (
               <div className="rows">
@@ -115,15 +116,15 @@ export function UnrealSections({ onSettings }: { onSettings: (tab: SettingsTab) 
                 ))}
               </div>
             )}
-            <div className="muted small">{relativeTime(u.editor.at)} 更新</div>
+            <div className="muted small">{relativeTime(u.editor.at)} {tr("更新")}</div>
           </>
         ) : (
-          <div className="muted small">{connected ? "更新ボタンで状態を取得します" : "Unreal Editor 接続後に表示できます"}</div>
+          <div className="muted small">{connected ? tr("更新ボタンで状態を取得します") : tr("Unreal Editor 接続後に表示できます")}</div>
         )}
       </Section>
 
-      <Section title={`ツールセット（${u.toolsets.length}）`} defaultOpen={false}>
-        {u.toolsets.length === 0 && <div className="muted small">未接続</div>}
+      <Section title={tr`ツールセット（${u.toolsets.length}）`} defaultOpen={false}>
+        {u.toolsets.length === 0 && <div className="muted small">{tr("未接続")}</div>}
         <ul className="tool-list">
           {u.toolsets.map((t) => (
             <li key={t}><code>{t}</code></li>
@@ -143,31 +144,31 @@ export function SendToUnreal() {
   const busy = state.currentId ? Boolean(state.runs[state.currentId]) : false;
   const ready = state.blender.blender === "connected" && state.unreal.status === "connected";
   const why = !ready
-    ? "Blender と Unreal Editor の両方に接続すると使えます"
+    ? tr("Blender と Unreal Editor の両方に接続すると使えます")
     : !target
-      ? "Blender でオブジェクトを選択してください"
-      : state.draftMode === "prompt"
-        ? "モデリングプロンプトのチャットでは使えません（通常のチャットで実行してください）"
+      ? tr("Blender でオブジェクトを選択してください")
+      : state.draftMode !== "modeling"
+        ? tr("このチャットでは使えません（通常のチャットで実行してください）")
         : busy
-          ? "応答の完了を待ってください"
+          ? tr("応答の完了を待ってください")
           : "";
   const send = async () => {
     setSending(true);
     const folder = "/Game/Roxy";
     const text = [
-      `Blender の「${target}」を UE5 に持ち込んでください。`,
-      `1. Blender MCP の export_to_unreal（action="export"、name="${target}"、ue_folder="${folder}"）で UE5 向けに書き出す。`,
-      "2. 返ってきた手順に従い、Unreal Editor の MCP でインポートする。",
-      `3. Unreal 側で取得したバウンズを export_to_unreal（action="verify"）に渡し、サイズ・ピボット・向きが正しいか確認する。`,
-      "4. 問題なければ、現在のレベルのワールド原点付近に配置する。",
-      "最後に、インポート先のアセットパスと確認結果を短く報告してください。問題があれば修正せずに報告してください。",
+      tr`Blender の「${target}」を UE5 に持ち込んでください。`,
+      tr`1. Blender MCP の export_to_unreal（action="export"、name="${target}"、ue_folder="${folder}"）で UE5 向けに書き出す。`,
+      tr("2. 返ってきた手順に従い、Unreal Editor の MCP でインポートする。"),
+      tr(`3. Unreal 側で取得したバウンズを export_to_unreal（action="verify"）に渡し、サイズ・ピボット・向きが正しいか確認する。`),
+      tr("4. 問題なければ、現在のレベルのワールド原点付近に配置する。"),
+      tr("最後に、インポート先のアセットパスと確認結果を短く報告してください。問題があれば修正せずに報告してください。"),
     ].join("\n");
     await actions.send(text, []);
     setSending(false);
   };
   return (
-    <button className="btn small send-to-ue" disabled={Boolean(why) || sending} title={why || `「${target}」を UE5 に送る`} onClick={() => void send()}>
-      {sending ? <span className="spinner" /> : <Icon name="send" size={13} />} UE5へ送る{target ? `（${target}）` : ""}
+    <button className="btn small send-to-ue" disabled={Boolean(why) || sending} title={why || tr`「${target}」を UE5 に送る`} onClick={() => void send()}>
+      {sending ? <span className="spinner" /> : <Icon name="send" size={13} />} {tr("UE5へ送る")}{target ? `（${target}）` : ""}
     </button>
   );
 }

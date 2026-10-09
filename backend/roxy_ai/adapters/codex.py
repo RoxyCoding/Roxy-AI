@@ -578,7 +578,7 @@ class CodexAdapter(AIAdapter):
             params["developerInstructions"] = req.system_append
         if req.prompt_only:
             params["sandbox"] = "read-only"
-            params["config"]["features"].update(plugins=False, shell_tool=False)
+            params["config"]["features"].update(plugins=False, shell_tool=False, image_generation=req.image_generation)
             params["config"]["web_search"] = "disabled"
         elif req.mcp_servers:
             params["config"]["mcp_servers"] = {

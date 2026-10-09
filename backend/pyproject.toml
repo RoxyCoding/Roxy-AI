@@ -1,6 +1,6 @@
 [project]
 name = "roxy-blender-ai-backend"
-version = "0.1.2"
+version = "0.1.6"
 description = "Roxy AI: local backend (FastAPI) for the desktop chat GUI"
 requires-python = ">=3.10"
 dependencies = [

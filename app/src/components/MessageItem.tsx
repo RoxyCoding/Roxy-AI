@@ -1,3 +1,4 @@
+import { t as tr } from "../lib/i18n";
 import { useState } from "react";
 import { fileUrl } from "../lib/backend";
 import { useStore } from "../lib/store";
@@ -34,7 +35,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       className="icon-btn sm"
-      title="コピー"
+      title={tr("コピー")}
       onClick={() => {
         void navigator.clipboard.writeText(text);
         setDone(true);
@@ -64,10 +65,9 @@ export function MessageItem({ m, run, isLast, attachments }: {
           <div className="edit-box">
             <textarea value={draft} autoFocus rows={Math.min(10, draft.split("\n").length + 1)} onChange={(e) => setDraft(e.target.value)} />
             <div className="edit-note">
-              保存すると、このメッセージ以降の会話は削除され、AI内部のセッションはリセットされます（会話内容は引き継がれます）。
-            </div>
+              {tr("保存すると、このメッセージ以降の会話は削除され、AI内部のセッションはリセットされます（会話内容は引き継がれます）。")}</div>
             <div className="row gap-sm end">
-              <button className="btn" onClick={() => { setEditing(false); setDraft(m.content); }}>キャンセル</button>
+              <button className="btn" onClick={() => { setEditing(false); setDraft(m.content); }}>{tr("キャンセル")}</button>
               <button
                 className="btn primary"
                 disabled={busy || !draft.trim()}
@@ -75,8 +75,7 @@ export function MessageItem({ m, run, isLast, attachments }: {
                   if (await actions.editMessage(m, draft)) setEditing(false);
                 }}
               >
-                保存して再送信
-              </button>
+                {tr("保存して再送信")}</button>
             </div>
           </div>
         ) : (
@@ -87,7 +86,7 @@ export function MessageItem({ m, run, isLast, attachments }: {
             </div>
             <div className="msg-tools">
               <CopyButton text={m.content} />
-              <button className="icon-btn sm" title="編集して再送信" disabled={busy} onClick={() => { setDraft(m.content); setEditing(true); }}>
+              <button className="icon-btn sm" title={tr("編集して再送信")} disabled={busy} onClick={() => { setDraft(m.content); setEditing(true); }}>
                 <Icon name="edit" />
               </button>
             </div>
@@ -104,16 +103,11 @@ export function MessageItem({ m, run, isLast, attachments }: {
 
   return (
     <div className="msg assistant">
-      <div className="msg-head">
-        <img className="avatar" src="/roxy-icon.png" alt="Roxy" />
-        <span className="msg-who">Roxy</span>
-        <span className="muted small">{clockTime(m.created_at)}</span>
-      </div>
       {notices.length > 0 && (
         <div className="notices">
           {notices.map((n, i) => (
             <div key={i} className="notice">
-              <Icon name="alert" size={13} /> {n}
+              <Icon name="alert" size={13} /> {tr(n)}
             </div>
           ))}
         </div>
@@ -122,23 +116,23 @@ export function MessageItem({ m, run, isLast, attachments }: {
       {text && <Markdown text={text} />}
       {live && (
         <div className="run-status">
-          <span className="spinner" /> {live.status_text} <span className="muted">（{seconds(live.started_at)}）</span>
+          <span className="spinner" /> {tr(live.status_text)} <span className="muted">（{seconds(live.started_at)}）</span>
         </div>
       )}
       {m.status === "error" && (
         <div className="msg-error">
-          <Icon name="alert" /> <span>{m.error || "エラーが発生しました"}</span>
+          <Icon name="alert" /> <span>{tr(m.error) || tr("エラーが発生しました")}</span>
         </div>
       )}
-      {m.status === "cancelled" && <div className="muted small">応答は中断されました</div>}
+      {m.status === "cancelled" && <div className="muted small">{tr("応答は中断されました")}</div>}
       {!live && (
         <div className="msg-tools left">
           {text && <CopyButton text={text} />}
           {isLast && (m.status === "error" || m.status === "cancelled") && (
             <button className="btn small" disabled={busy} onClick={() => void actions.retry(m.conversation_id)}>
-              <Icon name="retry" size={13} /> 再試行
-            </button>
+              <Icon name="retry" size={13} /> {tr("再試行")}</button>
           )}
+          <span className="muted small">{clockTime(m.created_at)}</span>
           {m.meta?.duration ? <span className="muted small">{seconds(0, m.meta.duration)}</span> : null}
         </div>
       )}

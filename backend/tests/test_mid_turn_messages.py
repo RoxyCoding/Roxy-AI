@@ -39,7 +39,10 @@ def test_running_chat_accepts_additional_input_without_new_run(tmp_path):
         second = await state.chat.send(conv["id"], "additional", [], "codex", "")
         assert second["run"]["id"] == first["run"]["id"]
         assert state.chat.runs[conv["id"]] is run
-        adapter.steer.assert_awaited_once_with(conv["id"], [InputPart("text", text="additional")])
+        adapter.steer.assert_awaited_once()
+        assert adapter.steer.await_args.args[0] == conv["id"]
+        assert adapter.steer.await_args.args[1][-1] == InputPart("text", text="additional")
+        assert "selected Japanese" in adapter.steer.await_args.args[1][0].text
         with pytest.raises(ValueError):
             await state.chat.send(conv["id"], "", [], "codex", "")
         adapter.steer.side_effect = AdapterUnavailable("rejected")

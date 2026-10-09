@@ -61,11 +61,12 @@ def test_metadata_hidden_without_hiding_normal_prompt(text, expected):
     assert visible_text(text) == expected
 
 
-def test_streamed_reports_merge_once_and_reject_invalid_data(app):
+@pytest.mark.parametrize("mode", ["prompt", "design_prompt"])
+def test_streamed_reports_merge_once_and_reject_invalid_data(app, mode):
     state = app.state.roxy
-    conv = conversation(state)
+    conv = conversation(state, mode)
     state.db.update_conversation(conv["id"], {"brief": {"colors": "青"}})
-    run = Run("r", conv["id"], conv["project_id"], "codex", "", "u", "a", "lock", mode="prompt")
+    run = Run("r", conv["id"], conv["project_id"], "codex", "", "u", "a", "lock", mode=mode)
     events = []
 
     async def publish(event):
@@ -201,9 +202,10 @@ def test_conditions_reach_ai_and_progress_survives_completion(app, status):
         assert msg["meta"]["progress"]["stage"] != "done"
 
 
-def test_rewind_discards_later_brief(app):
+@pytest.mark.parametrize("mode", ["prompt", "design_prompt"])
+def test_rewind_discards_later_brief(app, mode):
     state = app.state.roxy
-    conv = conversation(state)
+    conv = conversation(state, mode)
     state.db.add_message(conv["id"], "user", "椅子")
     state.db.add_message(conv["id"], "assistant", "木製ですね", meta={"brief": BRIEF})
     later = state.db.add_message(conv["id"], "user", "机に変更")

@@ -1,12 +1,13 @@
 {
   "name": "roxy-blender-ai",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --noEmit",
+    "test:i18n": "node --test tests/i18n.test.cjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build --config src-tauri/tauri.release.conf.json"

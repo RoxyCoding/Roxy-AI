@@ -1,3 +1,4 @@
+import { t as tr } from "../lib/i18n";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { Icon } from "./Icons";
 import { cx } from "../lib/format";
@@ -37,10 +38,10 @@ export function Lightbox() {
       <div className="lightbox-bar" onClick={(e) => e.stopPropagation()}>
         <span className="ellipsis">{image.name}</span>
         {downloadError && <span role="alert">{downloadError}</span>}
-        <button className="icon-btn inverse" title="ダウンロード" onClick={async () => {
+        <button className="icon-btn inverse" title={tr("ダウンロード")} onClick={async () => {
           try {
             const response = await fetch(image.src, { cache: "no-store" });
-            if (!response.ok) throw new Error("画像を取得できません");
+            if (!response.ok) throw new Error(tr("画像を取得できません"));
             const blob = await response.blob();
             const url = URL.createObjectURL(blob);
             const link = document.createElement("a");
@@ -51,12 +52,12 @@ export function Lightbox() {
             link.remove();
             setTimeout(() => URL.revokeObjectURL(url), 1000);
           } catch {
-            setDownloadError("画像を取得できません。プレビューの保持期間が終了した可能性があります。");
+            setDownloadError(tr("画像を取得できません。プレビューの保持期間が終了した可能性があります。"));
           }
         }}>
           <Icon name="download" />
         </button>
-        <button className="icon-btn inverse" onClick={c.close} title="閉じる (Esc)">
+        <button className="icon-btn inverse" onClick={c.close} title={tr("閉じる (Esc)")}>
           <Icon name="x" />
         </button>
       </div>
@@ -66,7 +67,7 @@ export function Lightbox() {
           alt={image.name ?? ""}
           className={zoom ? "zoomed" : ""}
           onClick={() => setZoom((z) => !z)}
-          title={zoom ? "クリックで全体表示" : "クリックで等倍表示"}
+          title={zoom ? tr("クリックで全体表示") : tr("クリックで等倍表示")}
         />
       </div>
     </div>

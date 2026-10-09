@@ -1,3 +1,4 @@
+import { t as tr } from "../lib/i18n";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { del, fileUrl, upload } from "../lib/backend";
 import { useStore } from "../lib/store";
@@ -56,12 +57,12 @@ export const Composer = forwardRef<ComposerHandle>(function Composer(_, ref) {
 
   const addFiles = (files: File[], replaceKey?: string | null) => {
     const room = MAX_FILES - items.length + (replaceKey ? 1 : 0);
-    if (files.length > room) actions.toast(`添付は1回につき${MAX_FILES}件までです`, "error");
+    if (files.length > room) actions.toast(tr`添付は1回につき${MAX_FILES}件までです`, "error");
     const chosen = files.slice(0, Math.max(0, room));
     if (!chosen.length) return;
     const fresh: Pending[] = chosen.map((f) => ({
       key: `p${keySeq++}`,
-      name: f.name || "貼り付け画像.png",
+      name: f.name || tr("貼り付け画像.png"),
       size: f.size,
       isImage: f.type.startsWith("image/"),
     }));
@@ -120,13 +121,13 @@ export const Composer = forwardRef<ComposerHandle>(function Composer(_, ref) {
                 )}
                 <div className="pending-name">
                   <span className="ellipsis">{it.name}</span>
-                  <span className="muted">{it.error ? "失敗" : fileSize(it.size)}</span>
+                  <span className="muted">{it.error ? tr("失敗") : fileSize(it.size)}</span>
                 </div>
                 <div className="pending-actions">
-                  <button className="icon-btn sm" title="差し替え" onClick={() => { replaceTarget.current = it.key; fileInput.current?.click(); }}>
+                  <button className="icon-btn sm" title={tr("差し替え")} onClick={() => { replaceTarget.current = it.key; fileInput.current?.click(); }}>
                     <Icon name="retry" size={13} />
                   </button>
-                  <button className="icon-btn sm" title="削除" onClick={() => remove(it.key)}>
+                  <button className="icon-btn sm" title={tr("削除")} onClick={() => remove(it.key)}>
                     <Icon name="x" size={13} />
                   </button>
                 </div>
@@ -136,14 +137,13 @@ export const Composer = forwardRef<ComposerHandle>(function Composer(_, ref) {
         )}
         {imagesUnsupported && (
           <div className="composer-warn">
-            <Icon name="alert" size={13} /> 選択中のモデル「{model?.name}」は画像入力に対応していないため、画像はファイルパスとしてのみ渡されます。
-          </div>
+            <Icon name="alert" size={13} /> {tr("選択中のモデル「")}{model?.name}{tr("」は画像入力に対応していないため、画像はファイルパスとしてのみ渡されます。")}</div>
         )}
         <textarea
           ref={textarea}
           value={text}
           rows={1}
-          placeholder={running ? "実行中のAIに追加指示を送信…（Shift+Enterで改行）" : state.draftMode === "prompt" ? "作りたいものや用途、好みを相談…（参考画像も添付できます）" : "Blender でのアセット制作や、UE5 でのゲーム開発でやりたいことを入力…（Shift+Enterで改行）"}
+          placeholder={running ? tr("実行中のAIに追加指示を送信…（Shift+Enterで改行）") : state.draftMode === "design_prompt" ? tr("設定画にしたいもの、寸法、素材、見せたい細部を入力…（参考画像も添付できます）") : state.draftMode === "prompt" ? tr("作りたいものや用途、好みを相談…（参考画像も添付できます）") : tr("Blender でのアセット制作や、UE5 でのゲーム開発でやりたいことを入力…（Shift+Enterで改行）")}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             // Never send while a Japanese IME is composing.
@@ -161,7 +161,7 @@ export const Composer = forwardRef<ComposerHandle>(function Composer(_, ref) {
           }}
         />
         <div className="composer-bar">
-          <button className="icon-btn" title="ファイルを添付（ドラッグ＆ドロップ・貼り付けも可）" onClick={() => { replaceTarget.current = null; fileInput.current?.click(); }}>
+          <button className="icon-btn" title={tr("ファイルを添付（ドラッグ＆ドロップ・貼り付けも可）")} onClick={() => { replaceTarget.current = null; fileInput.current?.click(); }}>
             <Icon name="clip" />
           </button>
           <input
@@ -177,15 +177,15 @@ export const Composer = forwardRef<ComposerHandle>(function Composer(_, ref) {
               replaceTarget.current = null;
             }}
           />
-          <span className="composer-hint muted">{uploading ? "アップロード中…" : ""}</span>
+          <span className="composer-hint muted">{uploading ? tr("アップロード中…") : ""}</span>
           {running && (
-            <button className="send-btn stop" title="応答を中断" onClick={() => cid && void actions.cancel(cid)}>
+            <button className="send-btn stop" title={tr("応答を中断")} onClick={() => cid && void actions.cancel(cid)}>
               <Icon name="stop" />
             </button>
           )}
           <button
             className="send-btn"
-            title={running ? "追加指示を送信 (Enter)" : "送信 (Enter)"}
+            title={running ? tr("追加指示を送信 (Enter)") : tr("送信 (Enter)")}
             disabled={sending || uploading || (!text.trim() && !items.some((i) => i.att))}
             onClick={() => void submit()}
           >

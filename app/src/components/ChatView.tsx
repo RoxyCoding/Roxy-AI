@@ -1,3 +1,4 @@
+import { t as tr } from "../lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../lib/store";
 import { Composer, type ComposerHandle } from "./Composer";
@@ -15,18 +16,6 @@ export function useTick(active: boolean) {
   }, [active]);
 }
 
-const SUGGESTIONS = [
-  "今のBlenderシーンの状態を確認して教えて",
-  "UE5で開いているレベルの状態を確認して教えて",
-  "添付した三面図をもとに、モデリングの進め方を相談したい",
-  "選択中のオブジェクトの問題点をチェックして",
-];
-const PROMPT_SUGGESTIONS = [
-  "何を作るかまだ決まっていません。候補を一緒に考えてください",
-  "ゲーム用の建物を作りたいので、形や雰囲気から相談したい",
-  "参考画像をもとに、Blender向けのモデリングプロンプトにまとめたい",
-];
-
 export function ChatView({ onSettings }: { onSettings: (tab: SettingsTab) => void }) {
   const { state } = useStore();
   const scroller = useRef<HTMLDivElement>(null);
@@ -39,6 +28,7 @@ export function ChatView({ onSettings }: { onSettings: (tab: SettingsTab) => voi
   const messages = detail?.messages ?? [];
   const provider = state.providers.find((p) => p.id === state.draftProvider);
   const promptMode = state.draftMode === "prompt";
+  const designMode = state.draftMode === "design_prompt";
   useTick(Boolean(run));
 
   useEffect(() => {
@@ -92,33 +82,17 @@ export function ChatView({ onSettings }: { onSettings: (tab: SettingsTab) => voi
         {messages.length === 0 ? (
           <div className="welcome">
             <img className="welcome-logo" src="/roxy-logo.png" alt="Roxy" />
-            <h1>{promptMode ? "何を作るか相談しましょう" : "何を作りましょうか？"}</h1>
-            {promptMode && <p className="muted">アイデアや参考画像から、Blender向けのモデリングプロンプトにまとめます。</p>}
+            <h1>{designMode ? tr("モデリングに使う設定画を考えましょう") : promptMode ? tr("何を作るか相談しましょう") : tr("何を作りましょうか？")}</h1>
+            {designMode && <p className="muted">{tr("四面図・寸法・細部・構造・素材を整理して設定画を生成します。参考画像も添付できます。プロンプトの作成だけでも利用できます。")}</p>}
             {provider && !provider.auth_ok && !state.providersLoading && (
               <button className="notice-card" onClick={() => onSettings("ai")}>
-                <Icon name="alert" /> {provider.name}: {provider.detail || "ログイン状態を確認してください"}
+                <Icon name="alert" /> {provider.name}: {provider.detail || tr("ログイン状態を確認してください")}
               </button>
             )}
-            {!promptMode && state.blender.blender !== "connected" && (
+            {state.draftMode === "modeling" && state.blender.blender !== "connected" && (
               <button className="notice-card" onClick={() => onSettings("mcp")}>
-                <Icon name="plug" /> Blenderに接続されていません。Blenderの3Dビューで N キー →「Roxy Blender MCP」タブから接続してください。
-              </button>
+                <Icon name="plug" /> {tr("Blenderに接続されていません。Blenderの3Dビューで N キー →「Roxy Blender MCP」タブから接続してください。")}</button>
             )}
-            <div className="suggestions">
-              {(promptMode ? PROMPT_SUGGESTIONS : SUGGESTIONS).map((s) => (
-                <button key={s} className="suggestion" onClick={() => {
-                  const ta = document.querySelector<HTMLTextAreaElement>(".composer textarea");
-                  if (ta) {
-                    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
-                    setter?.call(ta, s);
-                    ta.dispatchEvent(new Event("input", { bubbles: true }));
-                    ta.focus();
-                  }
-                }}>
-                  {s}
-                </button>
-              ))}
-            </div>
           </div>
         ) : (
           <div className="thread">
@@ -140,7 +114,7 @@ export function ChatView({ onSettings }: { onSettings: (tab: SettingsTab) => voi
         <div className="dropzone">
           <div>
             <Icon name="image" size={28} />
-            <p>ここにドロップして添付</p>
+            <p>{tr("ここにドロップして添付")}</p>
           </div>
         </div>
       )}
