@@ -78,9 +78,10 @@ class LocalLLMAdapter(CodexAdapter):
         return Path(custom) if custom else self._data_root / "models"
 
     def _model_dirs(self) -> list[Path]:
-        # The default folder stays searched after a change, so earlier downloads keep working.
-        extra = [Path(d) for d in self._conf().get("model_dirs") or [] if d]
-        dirs = [self.models_dir(), *extra, *default_model_dirs(self._data_root)]
+        conf = self._conf()
+        extra = [Path(d) for d in conf.get("model_dirs") or [] if d]
+        defaults = [] if (conf.get("models_dir") or "").strip() else default_model_dirs(self._data_root)
+        dirs = [self.models_dir(), *extra, *defaults]
         return list(dict.fromkeys(dirs))
 
     # Status / models ------------------------------------------------------------------
@@ -262,8 +263,25 @@ class LocalLLMAdapter(CodexAdapter):
         # Small models reach for the shell instead of the MCP tools; hide it unless allowed.
         allow_shell = bool(self._conf().get("allow_shell", False))
         self.proxy.drop_functions = set() if allow_shell else {"exec_command", "write_stdin"}
+        log_path = self.llama._log_dir / "llama-server.log"
         try:
-            return await super().run(req, emit, approve)
+            log_offset = log_path.stat().st_size if rid == "builtin" else 0
+        except OSError:
+            log_offset = 0
+        try:
+            result = await super().run(req, emit, approve)
+            if rid == "builtin" and result.status == "error":
+                try:
+                    with log_path.open("rb") as log:
+                        log.seek(log_offset)
+                        failed_log = log.read()
+                    if b"ErrorOutOfDeviceMemory" in failed_log:
+                        result.error = ("GPUメモリが不足したため、ローカルモデルの応答が中断されました。"
+                                        "設定 → AI → ローカルLLMで「KVキャッシュをメインメモリに置く」を有効にするか、"
+                                        "CPUに置く層を増やす・コンテキスト長を小さくして再試行してください。")
+                except OSError:
+                    pass
+            return result
         finally:
             self.llama.last_used = time.time()
 

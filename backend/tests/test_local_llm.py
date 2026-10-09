@@ -199,11 +199,42 @@ def test_cpu_offload_arguments(tmp_path):
         "-ngl", "99", "--n-cpu-moe", "6", "--threads", "12", "--no-kv-offload"]
 
 
-def test_custom_models_dir_is_used_and_default_still_searched(tmp_path, monkeypatch):
+def test_custom_models_dir_limits_search_to_explicit_folders(tmp_path):
     custom = tmp_path / "D-drive-models"
-    a = _adapter(tmp_path, models_dir=str(custom))
+    extra = tmp_path / "extra"
+    a = _adapter(tmp_path, models_dir=str(custom), model_dirs=[str(extra), str(custom)])
     assert a.models_dir() == custom
     dirs = a._model_dirs()
-    assert dirs[0] == custom and (tmp_path / "models") in dirs and len(dirs) == len(set(dirs))
+    assert dirs == [custom, extra]
+    assert _adapter(tmp_path, models_dir="", model_dirs=[])._model_dirs() == local_llm.default_model_dirs(tmp_path)
     (tmp_path / "x").mkdir()
     assert _adapter(tmp_path / "x").models_dir() == tmp_path / "x" / "models"
+
+
+@pytest.mark.parametrize("new_error", [True, False])
+def test_local_run_reports_only_current_gpu_memory_error(tmp_path, monkeypatch, new_error):
+    from unittest.mock import AsyncMock
+    from roxy_ai.adapters.base import ModelInfo, ProviderStatus, RunResult
+    from roxy_ai.adapters.codex import CodexAdapter
+    from roxy_ai.local_runtime import LocalModel
+
+    adapter = _adapter(tmp_path)
+    model = LocalModel("m", str(tmp_path / "m.gguf"), None, 4)
+    adapter._local = {model.id: model}
+    monkeypatch.setattr(adapter, "status", AsyncMock(return_value=ProviderStatus(
+        id="local", name="local", available=True, models=[ModelInfo("m", "m")])))
+    monkeypatch.setattr(adapter.llama, "ensure", AsyncMock(return_value="http://127.0.0.1:9"))
+    monkeypatch.setattr(adapter.llama, "start_idle_watch", lambda fn: None)
+    log = tmp_path / "llama-server.log"
+    log.write_text("old ErrorOutOfDeviceMemory\n")
+
+    async def run(self, req, emit, approve):
+        with log.open("a") as f:
+            f.write("ErrorOutOfDeviceMemory\n" if new_error else "other failure\n")
+        return RunResult("s", "error", error="stream disconnected before completion")
+
+    monkeypatch.setattr(CodexAdapter, "run", run)
+    result = asyncio.run(adapter.run(RunRequest(conversation_id="c", parts=[], cwd=".", model="m"),
+                                    AsyncMock(), AsyncMock()))
+    assert result.status == "error"
+    assert ("GPUメモリ" in result.error) == new_error

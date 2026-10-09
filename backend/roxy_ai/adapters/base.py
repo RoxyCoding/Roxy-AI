@@ -173,6 +173,9 @@ class AIAdapter(abc.ABC):
     @abc.abstractmethod
     async def interrupt(self, conversation_id: str) -> None: ...
 
+    async def steer(self, conversation_id: str, parts: list[InputPart]) -> None:
+        raise AdapterUnavailable(f"{self.name} は実行中の追加指示に対応していません")
+
     async def forget(self, conversation_id: str) -> None:
         """Drop any live process/client tied to this conversation."""
 

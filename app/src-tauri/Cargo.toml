@@ -1,6 +1,6 @@
 [package]
 name = "roxy-blender-ai"
-version = "0.1.0"
+version = "0.1.2"
 description = "Roxy AI desktop shell"
 edition = "2021"
 

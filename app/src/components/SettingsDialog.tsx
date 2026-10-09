@@ -274,7 +274,7 @@ function ProviderCard({ p }: { p: ProviderStatus }) {
                   <Icon name="refresh" size={13} /> モデル一覧を更新
                 </button>
               </div>
-              <Field label="モデルの保存場所" hint="ダウンロードしたモデルの保存先。空欄なら既定（アプリのデータフォルダ内の models）。変更前に保存したモデルも引き続き使えます。">
+              <Field label="モデルの保存場所" hint="指定した場合は、このフォルダと追加のモデルフォルダだけを検索します。空欄なら既定の保存先と LM Studio などを自動検索します。">
                 <TextSetting browse="folder" value={String(conf.models_dir ?? "")} placeholder={`${state.boot.data_dir}\\models`}
                              onSave={(v) => void save({ models_dir: v.trim() }).then(() => actions.refreshProviders(true))} />
               </Field>

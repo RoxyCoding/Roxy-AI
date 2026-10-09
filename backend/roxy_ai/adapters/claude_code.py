@@ -46,6 +46,7 @@ from .base import (
     ApprovalFn,
     ApprovalRequest,
     EventSink,
+    InputPart,
     ModelInfo,
     ProviderStatus,
     RunRequest,
@@ -74,6 +75,7 @@ class _Live:
     model: str = ""
     approve: ApprovalFn | None = None
     running: bool = False
+    pending_inputs: int = 0
     cancelled: bool = False
     last_used: float = field(default_factory=time.time)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -369,6 +371,7 @@ class ClaudeCodeAdapter(AIAdapter):
         async def stream():
             yield message
 
+        live.pending_inputs = 1
         await live.client.query(stream())
         session_id = live.session_id
         model = req.model
@@ -388,7 +391,7 @@ class ClaudeCodeAdapter(AIAdapter):
             any_text = True
             await emit(TextDelta(chunk))
 
-        async for msg in live.client.receive_response():
+        async for msg in live.client.receive_messages():
             if isinstance(msg, StreamEvent):
                 if msg.parent_tool_use_id:
                     continue
@@ -448,6 +451,9 @@ class ClaudeCodeAdapter(AIAdapter):
                     "resets_at": info.resets_at, "status": info.status})
             elif isinstance(msg, ResultMessage):
                 result = msg
+                live.pending_inputs -= 1
+                if live.pending_inputs <= 0 or live.cancelled or msg.is_error:
+                    break
 
         if result is None:
             return RunResult(session_id, "error", error=last_error or "Claude から結果が返りませんでした", model=model)
@@ -463,6 +469,22 @@ class ClaudeCodeAdapter(AIAdapter):
                 raise SessionLostError(err)
             return RunResult(session_id, "error", error=err, model=model, usage=usage)
         return RunResult(session_id, "completed", model=model, usage=usage)
+
+    async def steer(self, conversation_id: str, parts: list[InputPart]) -> None:
+        live = self._live.get(conversation_id)
+        if not live or not live.running or live.cancelled or live.pending_inputs <= 0:
+            raise AdapterUnavailable("追加指示を送れる状態ではありません。準備または中断の完了後に送信してください。")
+        message = self._user_message(RunRequest(conversation_id=conversation_id, parts=parts, cwd="."))
+
+        async def stream():
+            yield message
+
+        live.pending_inputs += 1
+        try:
+            await live.client.query(stream())
+        except Exception:
+            live.pending_inputs -= 1
+            raise
 
     async def interrupt(self, conversation_id: str) -> None:
         live = self._live.get(conversation_id)

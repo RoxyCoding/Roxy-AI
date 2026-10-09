@@ -39,6 +39,10 @@ UE5 書き出し・Guide 管理などの Blender 制作機能はすべて
 | `backend/roxy_ai/context.py` | 会話内容の引き継ぎロジック（純粋関数・テストあり） |
 | `backend/roxy_ai/db.py` | SQLite（WAL） |
 
+応答中も送信ボタンまたは Enter で追加メッセージを送れます。Codex・ローカルLLMは進行中のターンへ追加指示を渡し、
+Claudeは同じセッションへ追加入力を送ります。添付にも対応し、中断ボタンは送信ボタンの隣に表示します。
+AIの準備中・中断中や送信に失敗した場合は、入力欄に内容を残します。
+
 ### モデリングプロンプトの相談
 
 左の「モデリングプロンプト」から、何を作るかの相談チャットを始められます。
@@ -99,7 +103,8 @@ Blender に加えて、Unreal Editor 内で動く MCP サーバー（既定 `htt
 上部バーの「ローカルLLM」で、PC上のモデルを使えます。外部への送信はなく、ログインも不要です。
 
 - **アプリ内蔵（既定）**：アプリが llama.cpp の `llama-server` を起動し、GGUF モデル（`.gguf`）を直接読み込みます。
-  モデルは `%APPDATA%\RoxyBlenderAI\models` と設定で追加したフォルダ、LM Studio のダウンロード先から自動で見つけ、
+  保存先を指定した場合は、そのフォルダと明示的に追加したフォルダだけを検索します。
+  保存先が未指定の場合は `%APPDATA%\RoxyBlenderAI\models` と LM Studio などの保存先から自動で見つけ、
   同じフォルダの `mmproj-*.gguf` があれば画像にも対応します。使わない時間が続くと自動で GPU メモリを解放します。
   `llama-server` は `winget install ggml.llamacpp` で入る公式ビルドを自動検出します。
 - **CPUオフロード**（設定 → AI → ローカルLLM）：CPUに置く層の数・MoEエキスパートをCPUに置く層の数（`--n-cpu-moe`）・

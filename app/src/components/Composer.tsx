@@ -91,7 +91,7 @@ export const Composer = forwardRef<ComposerHandle>(function Composer(_, ref) {
   };
 
   const submit = async () => {
-    if (sending || running || uploading) return;
+    if (sending || uploading) return;
     const ready = items.filter((i) => i.att).map((i) => i.att!.id);
     if (!text.trim() && !ready.length) return;
     setSending(true);
@@ -143,7 +143,7 @@ export const Composer = forwardRef<ComposerHandle>(function Composer(_, ref) {
           ref={textarea}
           value={text}
           rows={1}
-          placeholder={state.draftMode === "prompt" ? "作りたいものや用途、好みを相談…（参考画像も添付できます）" : "Blender でのアセット制作や、UE5 でのゲーム開発でやりたいことを入力…（Shift+Enterで改行）"}
+          placeholder={running ? "実行中のAIに追加指示を送信…（Shift+Enterで改行）" : state.draftMode === "prompt" ? "作りたいものや用途、好みを相談…（参考画像も添付できます）" : "Blender でのアセット制作や、UE5 でのゲーム開発でやりたいことを入力…（Shift+Enterで改行）"}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             // Never send while a Japanese IME is composing.
@@ -178,20 +178,19 @@ export const Composer = forwardRef<ComposerHandle>(function Composer(_, ref) {
             }}
           />
           <span className="composer-hint muted">{uploading ? "アップロード中…" : ""}</span>
-          {running ? (
+          {running && (
             <button className="send-btn stop" title="応答を中断" onClick={() => cid && void actions.cancel(cid)}>
               <Icon name="stop" />
             </button>
-          ) : (
-            <button
-              className="send-btn"
-              title="送信 (Enter)"
-              disabled={sending || uploading || (!text.trim() && !items.some((i) => i.att))}
-              onClick={() => void submit()}
-            >
-              {sending ? <span className="spinner light" /> : <Icon name="send" />}
-            </button>
           )}
+          <button
+            className="send-btn"
+            title={running ? "追加指示を送信 (Enter)" : "送信 (Enter)"}
+            disabled={sending || uploading || (!text.trim() && !items.some((i) => i.att))}
+            onClick={() => void submit()}
+          >
+            {sending ? <span className="spinner light" /> : <Icon name="send" />}
+          </button>
         </div>
       </div>
       <ComposerControls />

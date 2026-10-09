@@ -82,6 +82,7 @@ class Run:
     cancel_requested: bool = False
     task: asyncio.Task | None = None
     last_persist: float = 0.0
+    latest_input_seq: int = 0
 
     def snapshot(self) -> dict:
         return {
@@ -297,6 +298,8 @@ class ChatService:
         if not conv:
             raise KeyError(conversation_id)
         project = self.db.get_project(conv["project_id"])
+        if conversation_id in self.runs:
+            return await self._steer(self.runs[conversation_id], text, attachment_ids, provider, model)
         lock_key = self._check_free(conversation_id, project)
         self.adapter(provider)
         if not text.strip() and not attachment_ids:
@@ -325,6 +328,45 @@ class ChatService:
         op("run.start", conversation=conversation_id, provider=provider, model=model, effort=effort, run=run.id)
         run.task = asyncio.create_task(self._execute(run, user_msg, project))
         return {"run": run.snapshot(), "user_message": user_msg, "assistant_message": assistant}
+
+    async def _steer(self, run: Run, text: str, attachment_ids: list[str], provider: str, model: str) -> dict:
+        if run.cancel_requested:
+            raise Conflict("中断中です。完了してから送信してください。")
+        if provider != run.provider or model != run.model:
+            raise Conflict("実行中の追加指示は、同じAIとモデルで送信してください。")
+        if not text.strip() and not attachment_ids:
+            raise ValueError("メッセージが空です")
+        attachments = self.db.get_attachments(attachment_ids)
+        if len(attachments) != len(set(attachment_ids)):
+            raise ValueError("添付ファイルが見つかりません。添付し直してください。")
+        if any(a.get("conversation_id") not in (None, run.conversation_id) for a in attachments):
+            raise ValueError("別の会話の添付ファイルは送信できません。")
+        adapter = self.adapter(run.provider)
+        status = await adapter.status()
+        supports_images = status.supports_images
+        if hasattr(adapter, "model_supports_images"):
+            supports_images = adapter.model_supports_images(run.model)
+        prepared = self.attachments.prepare(attachments, supports_images=supports_images,
+            mimes=adapter.image_mimes(), max_edge=adapter.max_image_edge(), provider_name=adapter.name)
+        parts = ([InputPart("text", text=text)] if text.strip() else []) + prepared.parts
+        if not parts:
+            raise ValueError("送信できる添付ファイルがありません。添付し直してください。")
+        await adapter.steer(run.conversation_id, parts)
+        self.db.assign_attachments(attachment_ids, run.conversation_id)
+        msg = self.db.add_message(run.conversation_id, "user", text, provider=run.provider,
+                                  model=run.model, attachments=attachment_ids)
+        run.latest_input_seq = max(run.latest_input_seq, msg["seq"])
+        if self.runs.get(run.conversation_id) is not run:
+            session = self.db.get_ai_session(run.conversation_id, run.provider)
+            if session:
+                self.db.set_ai_session(run.conversation_id, run.provider, session["session_id"],
+                                       max(session["synced_seq"], msg["seq"]), run.model)
+        conv = self.db.update_conversation(run.conversation_id, {"draft": {}})
+        await self.publish({"type": "message.created", "message": msg})
+        await self.publish({"type": "conversation.updated", "conversation": conv})
+        for notice in prepared.notices:
+            await self._notice(run, notice)
+        return {"run": run.snapshot(), "user_message": msg}
 
     async def edit_and_resend(self, conversation_id: str, message_id: str, text: str,
                               attachment_ids: list[str] | None, provider: str, model: str,
@@ -398,7 +440,8 @@ class ChatService:
                     "tool_calls": run.tool_calls, "meta": meta,
                 })
                 if run.session_id:
-                    self.db.set_ai_session(run.conversation_id, run.provider, run.session_id, msg["seq"], run.model)
+                    self.db.set_ai_session(run.conversation_id, run.provider, run.session_id,
+                                           max(msg["seq"], run.latest_input_seq), run.model)
                 await self.publish({"type": "message.updated", "message": msg})
             self.runs.pop(run.conversation_id, None)
             for key in run.lock_key.split("|"):

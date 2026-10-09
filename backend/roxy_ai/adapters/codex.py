@@ -29,6 +29,7 @@ from .base import (
     ApprovalFn,
     ApprovalRequest,
     EventSink,
+    InputPart,
     ModelInfo,
     ProviderStatus,
     RunRequest,
@@ -631,6 +632,20 @@ class CodexAdapter(AIAdapter):
         if turn.status == "failed" or turn.error:
             return RunResult(thread_id, "error", error=turn.error or "Codex のターンが失敗しました", model=req.model)
         return RunResult(thread_id, "completed", model=req.model, usage=turn.usage)
+
+    async def steer(self, conversation_id: str, parts: list[InputPart]) -> None:
+        thread_id = self._conv_thread.get(conversation_id)
+        turn = self._turns.get(thread_id or "")
+        if not turn or not turn.turn_id or turn.done.is_set() or turn.cancelled:
+            raise AdapterUnavailable("追加指示を送れる状態ではありません。準備または中断の完了後に送信してください。")
+        inputs = [{"type": "text", "text": p.text} if p.kind == "text" else
+                  {"type": "localImage", "path": p.path} for p in parts if p.kind in ("text", "image")]
+        try:
+            await self._server.request("turn/steer", {
+                "threadId": thread_id, "expectedTurnId": turn.turn_id, "input": inputs,
+            })
+        except RpcError as e:
+            raise AdapterUnavailable(f"追加指示を送信できませんでした: {e}") from e
 
     async def interrupt(self, conversation_id: str) -> None:
         thread_id = self._conv_thread.get(conversation_id)
