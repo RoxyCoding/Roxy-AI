@@ -85,7 +85,10 @@ def test_prompt_chat_roundtrip_and_request_isolation(tmp_path, monkeypatch, mode
             assert request.system_append.index("手順1 イメージ画") < request.system_append.index("手順2 確認") < request.system_append.index("手順3 設定画") < request.system_append.index("手順4 モデリングプロンプト")
             assert "イメージ画を1枚、image_generationツールで実際に生成" in request.system_append
             assert "「このイメージで設定画に進めてよいか」を確認" in request.system_append and "承認されるまでこの確認を繰り返して" in request.system_append
-            assert "この段階では設定画もモデリングプロンプトも生成しない" in request.system_append
+            assert "この段階では設定画を生成せず、画像生成プロンプトやモデリングプロンプトを本文に書かず" in request.system_append
+            assert "```textや```modelingのコードブロックも出力しない" in request.system_append
+            assert "ユーザーの承認を得るまで、手順3・手順4に進まない" in request.system_append
+            assert "イメージ画の段階では、ユーザーから求められない限りプロンプトを提示しない" in request.system_append
             assert "承認されたイメージ画を基準" in request.system_append
             assert "ネイティブのimage_generationを直接使用" in request.system_append
             assert "画像生成ツールに渡したプロンプト全体" in request.system_append
