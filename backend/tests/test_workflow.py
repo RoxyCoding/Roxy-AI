@@ -162,6 +162,27 @@ def test_design_handoff_attaches_latest_design_sheet(app):
     assert Path(result["attachments"][0]["path"]).read_bytes() == sheets[1]
 
 
+def test_design_handoff_attaches_every_scene_sheet_but_not_the_concept(app):
+    state = app.state.roxy
+    conv = conversation(state, mode="design_prompt")
+    images = []
+    for color in ("white", "red", "green", "blue"):
+        buf = io.BytesIO()
+        Image.new("RGB", (10, 10), color).save(buf, "PNG")
+        images.append(buf.getvalue())
+    concept, layout, chair, table = (state.attachments.preview_image(data, "image/png") for data in images)
+    state.db.add_message(conv["id"], "assistant", "部屋の設定画", tool_calls=[
+        {"name": "image_generation", "images": [concept], "design_sheet": False},
+        {"name": "image_generation", "images": [layout], "design_sheet": True},
+        {"name": "image_generation", "images": [chair], "design_sheet": True},
+        {"name": "image_generation", "images": [table], "design_sheet": True},
+    ])
+    with TestClient(app) as client:
+        result = client.post(f"/api/conversations/{conv['id']}/handoff", json={"text": "部屋を作ってください"}, headers=AUTH).json()
+    assert [a["name"] for a in result["attachments"]] == ["設定画1.png", "設定画2.png", "設定画3.png"]
+    assert [Path(a["path"]).read_bytes() for a in result["attachments"]] == images[1:]
+
+
 def test_handoff_missing_image_rolls_back_target(app):
     state = app.state.roxy
     conv = conversation(state)

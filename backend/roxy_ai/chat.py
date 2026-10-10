@@ -239,13 +239,25 @@ class ChatService:
                 "承認されるまでこの確認を繰り返してください。\n"
                 "手順3 設定画: イメージ画が承認されたら、承認されたイメージ画を基準として、デザイン・比率・配色・素材・装飾を変えずに"
                 "上記の内容を満たす設定画をimage_generationツールで生成してください。\n"
+                "対象が部屋・店舗・庭・街角など、複数の物で構成されるシーンの場合は、物ごとに設定画を分けてください。"
+                "手順1のイメージ画はシーン全体を1枚で生成し、承認後の手順3では、まずシーンに含まれる物の一覧を短く示してください。"
+                "続けて、1枚目に配置図（平面図と主要な立面図で、部屋や敷地の寸法、各物の位置・向き・間隔・高さを示す）を生成し、"
+                "2枚目以降に物ごとの設定画を1枚ずつ、上記の内容を満たすように生成してください。"
+                "同じ物の繰り返しは1枚にまとめて個数を注記し、小さな小物は種類ごとに1枚にまとめてかまいません。"
+                "各設定画には「設定画2: ダイニングチェア」のように番号と物の名前を入れ、全図でシーンのデザイン・縮尺基準・配色を揃えてください。"
+                "設定画は配置図を含めて10枚以内にし、超える場合は主要な物を優先して、残りを生成するか確認してください。"
+                "引き継ぎ時に添付されるのは最新の応答で生成した設定画だけなので、シーンの設定画は1回の応答でまとめて生成し、"
+                "一部を修正する場合も配置図と全ての設定画をまとめて生成し直してください。\n"
                 "手順4 モデリングプロンプト: 設定画を生成したら、その後に必ず、その設定画と確定条件をもとにしたBlender向けのモデリングプロンプトを"
                 "```modelingのコードブロックで提示してください。画像生成用のプロンプトとは別のブロックにしてください。"
                 "モデリングプロンプトは、添付される設定画を参考画像として使う前提で、別のチャットに貼るだけで制作できる内容にしてください。"
                 "対象と用途、全体寸法と単位、部品構成、各部品の形状・寸法・厚み、接合方法と位置、素材・色・質感、"
                 "ポリゴン数などの品質の目安、仕上げを含め、仮寸法や推測した構造はその旨を明記してください。"
+                "シーンの場合は、モデリングプロンプトを1つの```modelingブロックにまとめ、設定画は生成順に「設定画1.png（配置図）」"
+                "「設定画2.png（ダイニングチェア）」のように添付される前提で番号を参照してください。"
+                "部屋や敷地の寸法、物ごとの仕様と個数、各物の配置位置・向き、物ごとにモデリングしてから配置する制作順序を含めてください。"
                 "設定画の修正を依頼されたら、承認済みのイメージ画と確定条件を保って設定画を修正し、修正後の設定画に合わせたモデリングプロンプト全体を再提示してください。"
-                "ユーザーがイメージ画の確認を省いて設定画の直接生成を明示的に依頼した場合は、その指示を優先して手順3から進めてください。\n"
+                "ユーザーがイメージ画の確認を省いて設定画の直接生成を明示的に依頼した場合は、その指示を優先し、```roxy-stageで{\"stage\": \"sheet\"}を報告してから手順3に進んでください。\n"
                 "ネイティブのimage_generationを直接使用し、画像生成の準備としてSKILL.mdを読んだり、MCP経由のコマンドを実行したりしないでください。"
                 "画像生成の依頼をプロンプトの提示だけで終えないでください。"
                 "生成結果は画像コンテンツとして返し、チャット内でプレビュー表示してください。"
@@ -367,14 +379,22 @@ class ChatService:
             self.mcp_restarting = False
 
     def _latest_generated_images(self, conversation_id: str) -> list[tuple[bytes, str]]:
-        """Images of the newest image generation in this chat, while their previews are still in memory."""
+        """The newest design sheets in this chat, while their previews are still in memory.
+
+        A scene has one sheet per object, so every sheet of the newest reply is returned in order.
+        Concept images are left out; replies from before the staged flow fall back to their last image.
+        """
         for message in reversed(self.db.list_messages(conversation_id)):
             if message["role"] != "assistant":
                 continue
-            for tc in reversed(message.get("tool_calls") or []):
-                found = [self.attachments.previews[i] for i in tc.get("images") or [] if i in self.attachments.previews]
-                if tc.get("name") == "image_generation" and found:
-                    return found
+            calls = [tc for tc in message.get("tool_calls") or [] if tc.get("name") == "image_generation"]
+            if any("design_sheet" in tc for tc in calls):
+                calls = [tc for tc in calls if tc.get("design_sheet")]
+            else:
+                calls = calls[-1:]
+            found = [self.attachments.previews[i] for tc in calls for i in tc.get("images") or [] if i in self.attachments.previews]
+            if found:
+                return found
         return []
 
     async def handoff_prompt(self, conversation_id: str, text: str) -> dict:
@@ -732,6 +752,8 @@ class ChatService:
         elif isinstance(ev, ToolStart):
             tc = {"id": ev.call_id, "name": ev.name, "server": ev.server, "tool": ev.tool, "input": ev.input,
                   "status": "running", "output": "", "images": [], "started_at": time.time(), "ended_at": None}
+            if run.mode == "design_prompt" and ev.name == "image_generation":
+                tc["design_sheet"] = run.sheet_from is not None  # concept images are not handed off
             run.tool_calls.append(tc)
             run.status_text = f"ツール実行中: {ev.name}"
             await self.publish({"type": "run.tool", "conversation_id": cid, "tool_call": tc, "status_text": run.status_text})

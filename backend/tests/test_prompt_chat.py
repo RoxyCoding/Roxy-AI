@@ -5,7 +5,7 @@ import sqlite3
 import pytest
 from fastapi.testclient import TestClient
 
-from roxy_ai.adapters.base import AIAdapter, ApprovalDecision, ApprovalRequest, ModelInfo, ProviderStatus, RunRequest, RunResult, TextDelta
+from roxy_ai.adapters.base import AIAdapter, ApprovalDecision, ApprovalRequest, ModelInfo, ProviderStatus, RunRequest, RunResult, TextDelta, ToolStart
 from roxy_ai.adapters.claude_code import ClaudeCodeAdapter
 from roxy_ai.adapters.codex import CodexAdapter
 from roxy_ai.api import create_app
@@ -89,6 +89,8 @@ def test_prompt_chat_roundtrip_and_request_isolation(tmp_path, monkeypatch, mode
             assert "```textや```modelingのコードブロックも出力しない" in request.system_append
             assert "ユーザーの承認を得るまで、手順3・手順4に進まない" in request.system_append
             assert "roxy-stage" in request.system_append and "設定画に進む" in request.system_append
+            for scene in ("複数の物で構成されるシーン", "物ごとに設定画を分け", "配置図", "物ごとの設定画を1枚ずつ", "10枚以内", "設定画1.png（配置図）", "物ごとにモデリングしてから配置"):
+                assert scene in request.system_append
             assert "イメージ画の段階では、ユーザーから求められない限りプロンプトを提示しない" in request.system_append
             assert "承認されたイメージ画を基準" in request.system_append
             assert "ネイティブのimage_generationを直接使用" in request.system_append
@@ -211,8 +213,10 @@ def test_design_chat_holds_modeling_prompt_until_concept_is_approved(tmp_path):
 def test_design_chat_question_approval_unlocks_modeling_prompt(tmp_path):
     class ApprovingAdapter(PromptAdapter):
         async def run(self, req, emit, approve):
+            await emit(ToolStart("concept", "image_generation", {}))
             await emit(TextDelta("イメージ画です。\n```modeling\n承認前\n```\n"))
             await approve(ApprovalRequest("question", "AIからの質問", questions=[{"id": "ok", "question": "進めますか？", "options": []}], allow_session=False))
+            await emit(ToolStart("sheet", "image_generation", {}))
             await emit(TextDelta("```modeling\n承認後\n```"))
             return RunResult("design-session", "completed")
 
@@ -232,6 +236,7 @@ def test_design_chat_question_approval_unlocks_modeling_prompt(tmp_path):
             pass
         detail = client.get(f"/api/conversations/{conv['id']}", headers=headers).json()
         assert "承認前" not in detail["messages"][-1]["content"] and "承認後" in detail["messages"][-1]["content"]
+        assert [(tc["id"], tc["design_sheet"]) for tc in detail["messages"][-1]["tool_calls"]] == [("concept", False), ("sheet", True)]
         assert detail["conversation"]["design_stage"] == "sheet"
 
 
