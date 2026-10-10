@@ -28,7 +28,7 @@ export const ENGLISH: Record<string, string> = {
   "許可": "Allow",
   "何を作るか相談しましょう": "Let's discuss what to create",
   "モデリングに使う設定画を考えましょう": "Let's plan a design sheet for modeling",
-  "四面図・寸法・細部・構造・素材を整理して設定画を生成します。参考画像も添付できます。プロンプトの作成だけでも利用できます。": "Generate a design sheet with four orthographic views, dimensions, details, construction, and materials. You can attach references or ask for a prompt only.",
+  "まずイメージ画を生成して確認し、承認後に四面図・寸法・細部・構造・素材を整理した設定画とモデリングプロンプトを作成します。参考画像も添付できます。プロンプトの作成だけでも利用できます。": "First generate a concept image for your review. Once approved, create a design sheet with four orthographic views, dimensions, details, construction, and materials, followed by a modeling prompt. You can attach references or ask for a prompt only.",
   "画像生成にはCodexを選択してください。このAIでは条件相談とプロンプト作成を利用できます。": "Select Codex to generate images. This AI can help with the brief and prompt.",
   "何を作りましょうか？": "What would you like to create?",
   "ログイン状態を確認してください": "Check your login status",

@@ -83,7 +83,7 @@ export function ChatView({ onSettings }: { onSettings: (tab: SettingsTab) => voi
           <div className="welcome">
             <img className="welcome-logo" src="/roxy-logo.png" alt="Roxy" />
             <h1>{designMode ? tr("モデリングに使う設定画を考えましょう") : promptMode ? tr("何を作るか相談しましょう") : tr("何を作りましょうか？")}</h1>
-            {designMode && <p className="muted">{tr("四面図・寸法・細部・構造・素材を整理して設定画を生成します。参考画像も添付できます。プロンプトの作成だけでも利用できます。")}</p>}
+            {designMode && <p className="muted">{tr("まずイメージ画を生成して確認し、承認後に四面図・寸法・細部・構造・素材を整理した設定画とモデリングプロンプトを作成します。参考画像も添付できます。プロンプトの作成だけでも利用できます。")}</p>}
             {provider && !provider.auth_ok && !state.providersLoading && (
               <button className="notice-card" onClick={() => onSettings("ai")}>
                 <Icon name="alert" /> {provider.name}: {provider.detail || tr("ログイン状態を確認してください")}
