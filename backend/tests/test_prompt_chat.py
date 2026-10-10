@@ -81,7 +81,13 @@ def test_prompt_chat_roundtrip_and_request_isolation(tmp_path, monkeypatch, mode
             for required in ("設定画", "四面図", "正投影", "共通の縮尺", "反対側面", "基本寸法", "仮寸法", "拡大図", "接合構造", "斜め3方向", "素材・色・質感", "整合性", "基準図", "高解像度", "```text", "roxy-brief"):
                 assert required in request.system_append
             assert "実際に設定画を生成" in request.system_append
-            assert client.post(f"/api/conversations/{conv['id']}/handoff", json={"text": "設定画の画像生成指示"}, headers=headers).status_code == 400
+            assert "ネイティブのimage_generationを直接使用" in request.system_append
+            assert "画像生成ツールに渡したプロンプト全体" in request.system_append
+            assert "今回の生成に使用したプロンプト全体も提示" in request.system_append
+            for requirement in ("裏面・底面の正投影図", "厚み・断面寸法", "部品どうしの接合部", "装飾の幅・高さ・中心位置", "測定の始点・終点", "全体シートと補足シート", "ユーザーが1枚を指定"):
+                assert requirement in request.system_append
+            assert "```modeling" in request.system_append and "Blender向けのモデリングプロンプト" in request.system_append
+            assert client.post(f"/api/conversations/{conv['id']}/handoff", json={"text": "椅子のモデリング指示"}, headers=headers).status_code == 200
         assert "木製の椅子" in detail["messages"][-1]["content"]
         assert state.chat.locks[state.chat.endpoint(project)] == normal["id"]
         assert client.patch(f"/api/conversations/{conv['id']}", json={"model": "new"}, headers=headers).json()["mode"] == mode
@@ -123,7 +129,12 @@ def test_prompt_adapters_disable_execution_tools(tmp_path):
     codex._conf = lambda: {"sandbox": "workspace-write"}
     params = codex._thread_params(request)
     assert params["sandbox"] == "read-only"
-    assert params["config"]["features"] == {"default_mode_request_user_input": True, "plugins": False, "shell_tool": False, "image_generation": False}
+    assert params["config"]["features"] == {
+        "default_mode_request_user_input": True, "plugins": False, "apps": False,
+        "skip_host_skill_discovery": True, "shell_tool": False, "image_generation": False,
+    }
+    # No skill list: otherwise the model first tries to read imagegen's SKILL.md and fails.
+    assert params["config"]["skills"] == {"bundled": {"enabled": False}, "include_instructions": False}
     request.image_generation = True
     design_params = codex._thread_params(request)
     assert design_params["config"]["features"]["image_generation"] is True

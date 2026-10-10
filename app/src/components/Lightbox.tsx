@@ -35,10 +35,11 @@ export function Lightbox() {
   if (!c || !image) return null;
   return (
     <div className={cx("lightbox", preview.exiting && "slide-out")} inert={preview.exiting} onClick={c.close}>
-      <div className="lightbox-bar" onClick={(e) => e.stopPropagation()}>
+      <div className="lightbox-bar">
         <span className="ellipsis">{image.name}</span>
         {downloadError && <span role="alert">{downloadError}</span>}
-        <button className="icon-btn inverse" title={tr("ダウンロード")} onClick={async () => {
+        <button className="icon-btn inverse" title={tr("ダウンロード")} onClick={async (e) => {
+          e.stopPropagation();
           try {
             const response = await fetch(image.src, { cache: "no-store" });
             if (!response.ok) throw new Error(tr("画像を取得できません"));
@@ -61,12 +62,12 @@ export function Lightbox() {
           <Icon name="x" />
         </button>
       </div>
-      <div className={zoom ? "lightbox-scroll" : "lightbox-fit"} onClick={(e) => e.stopPropagation()}>
+      <div className={zoom ? "lightbox-scroll" : "lightbox-fit"}>
         <img
           src={image.src}
           alt={image.name ?? ""}
           className={zoom ? "zoomed" : ""}
-          onClick={() => setZoom((z) => !z)}
+          onClick={(e) => { e.stopPropagation(); setZoom((z) => !z); }}
           title={zoom ? tr("クリックで全体表示") : tr("クリックで等倍表示")}
         />
       </div>

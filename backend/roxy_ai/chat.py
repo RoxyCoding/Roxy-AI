@@ -205,11 +205,29 @@ class ChatService:
                 "正面を基準図とし、背面などの固有の違いは明記する。拡大図にも全体図と同じ構造を描く。\n"
                 "8. 高解像度で細部を読み取れる、余白のある整理されたシート。各図に短いラベルを付け、図や寸法線を重ねない。"
                 "強いパース、形を隠す影や背景、小さく潰れた細部を避ける。\n" +
+                "モデリングで形状を決めるため、対象に必要な次の補足も画像生成とプロンプトに含めてください。"
+                "裏面・底面の正投影図で機構、取付板、ボルト位置と間隔を示す。"
+                "主要部の厚み・断面寸法、支柱の直径、張り出し量を示す。"
+                "部品どうしの接合部を拡大し、接続位置、固定方法、重なりを示す。"
+                "装飾の幅・高さ・中心位置を示し、刺繍や模様は必要に応じて単独の平面図も添える。"
+                "各寸法線は測定の始点・終点を明確にし、寸法値・単位・ラベルの文字崩れと図どうしの矛盾を確認する。"
+                "未確認の構造や寸法は提案・仮寸法として明記する。\n"
+                "情報が多い対象は、全体シートと補足シートを分けて生成してください。"
+                "全体シートは全体図・基本寸法・素材、補足シートは裏面・断面・接合部・装飾の詳細を中心とし、"
+                "全シートで同じデザイン・縮尺基準・寸法を保つ。ユーザーが1枚を指定した場合はその指定を優先する。\n" +
                 brief_instruction +
                 "ユーザーが画像の生成を依頼したら、条件を整理してimage_generationツールで実際に設定画を生成してください。"
+                "ネイティブのimage_generationを直接使用し、画像生成の準備としてSKILL.mdを読んだり、MCP経由のコマンドを実行したりしないでください。"
                 "画像生成の依頼をプロンプトの提示だけで終えないでください。未指定の条件は推奨値を使い、仮寸法などの仮定を短く添えてください。"
                 "生成結果は画像コンテンツとして返し、チャット内でプレビュー表示してください。"
-                "修正を依頼されたら、元の設定画と確定条件を保って画像を修正してください。\n"
+                "画像生成と同時に、画像生成ツールに渡したプロンプト全体をコピーできる```textのコードブロックで必ず提示してください。"
+                "ツールが修正済みプロンプトを返した場合は、送信したプロンプトと区別して示してください。"
+                "修正を依頼されたら、元の設定画と確定条件を保って画像を修正し、今回の生成に使用したプロンプト全体も提示してください。\n"
+                "設定画を生成・修正したら、その後に必ず、その設定画と確定条件をもとにしたBlender向けのモデリングプロンプトを"
+                "```modelingのコードブロックで提示してください。画像生成用のプロンプトとは別のブロックにしてください。"
+                "モデリングプロンプトは、添付される設定画を参考画像として使う前提で、別のチャットに貼るだけで制作できる内容にしてください。"
+                "対象と用途、全体寸法と単位、部品構成、各部品の形状・寸法・厚み、接合方法と位置、素材・色・質感、"
+                "ポリゴン数などの品質の目安、仕上げを含め、仮寸法や推測した構造はその旨を明記してください。\n"
                 "プロンプトの作成だけを依頼された場合は、コピーできる設定画生成プロンプト全体を```textのコードブロックにまとめてください。"
                 "画像生成ツールが利用できない場合は、生成したと偽らず、Codexへの切り替えや利用条件の確認を案内してください。\n"
                 "このチャットでは設定画の相談・画像生成・プロンプト作成を行います。Blender操作やコマンド実行は行わないでください。"
@@ -323,13 +341,24 @@ class ChatService:
         finally:
             self.mcp_restarting = False
 
+    def _latest_generated_images(self, conversation_id: str) -> list[tuple[bytes, str]]:
+        """Images of the newest image generation in this chat, while their previews are still in memory."""
+        for message in reversed(self.db.list_messages(conversation_id)):
+            if message["role"] != "assistant":
+                continue
+            for tc in reversed(message.get("tool_calls") or []):
+                found = [self.attachments.previews[i] for i in tc.get("images") or [] if i in self.attachments.previews]
+                if tc.get("name") == "image_generation" and found:
+                    return found
+        return []
+
     async def handoff_prompt(self, conversation_id: str, text: str) -> dict:
         if not text.strip():
             raise ValueError("引き継ぐプロンプトが空です。")
         source = self.db.get_conversation(conversation_id)
         if not source:
             raise KeyError(conversation_id)
-        if source["mode"] != "prompt":
+        if source["mode"] not in ("prompt", "design_prompt"):
             raise ValueError("相談チャットから制作チャットへ引き継いでください。")
         if conversation_id in self.runs:
             raise Conflict("相談の応答が完了してから引き継いでください。")
@@ -339,6 +368,7 @@ class ChatService:
         if len(attachments) != len(ids):
             raise ValueError("相談に添付されたファイルが見つかりません。添付し直してから引き継いでください。")
         images = [a for a in attachments if a["mime"].startswith("image/")]
+        generated = self._latest_generated_images(conversation_id) if source["mode"] == "design_prompt" else []
         conv = self.db.create_conversation(source["project_id"], source["provider"], source["model"], effort=source["effort"])
         copied = []
         try:
@@ -349,6 +379,8 @@ class ChatService:
                 # Each chat owns its copy, so deleting either chat preserves the other.
                 data = await asyncio.to_thread(path.read_bytes)
                 copied.append(await asyncio.to_thread(self.attachments.save_bytes, data, image["name"], image["mime"], "upload", conv["id"]))
+            for i, (data, mime) in enumerate(generated, 1):  # the design sheet the prompt describes
+                copied.append(await asyncio.to_thread(self.attachments.save_bytes, data, f"設定画{i}.png", mime, "upload", conv["id"]))
             conv = self.db.update_conversation(conv["id"], {"brief": source["brief"], "draft": {
                 "text": text, "attachment_ids": [a["id"] for a in copied],
             }})

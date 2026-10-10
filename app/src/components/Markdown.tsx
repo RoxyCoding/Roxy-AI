@@ -9,7 +9,9 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
   const { state, actions } = useStore();
   const [copied, setCopied] = useState(false);
   const [handingOff, setHandingOff] = useState(false);
-  const prompt = state.draftMode === "prompt" && ["", "text", "markdown"].includes(lang);
+  // The design chat writes its Blender prompt as ```modeling, apart from the image prompt.
+  const prompt = (state.draftMode === "prompt" && ["", "text", "markdown"].includes(lang))
+    || (state.draftMode === "design_prompt" && lang === "modeling");
   const designPrompt = state.draftMode === "design_prompt" && ["", "text", "markdown"].includes(lang);
   const running = state.currentId ? Boolean(state.runs[state.currentId]) : false;
   return (

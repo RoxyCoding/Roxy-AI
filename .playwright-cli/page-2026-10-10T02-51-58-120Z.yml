@@ -1,0 +1,8 @@
+- generic [ref=f1e2]:
+  - button "開く" [active] [ref=f1e3] [cursor=pointer]
+  - generic [ref=f1e4]:
+    - generic [ref=f1e5]:
+      - generic [ref=f1e6]: 確認画像
+      - button "ダウンロード" [ref=f1e7] [cursor=pointer]
+      - button "閉じる (Esc)" [ref=f1e10] [cursor=pointer]
+    - img "確認画像" [ref=f1e14]

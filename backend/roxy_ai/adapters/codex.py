@@ -578,8 +578,14 @@ class CodexAdapter(AIAdapter):
             params["developerInstructions"] = req.system_append
         if req.prompt_only:
             params["sandbox"] = "read-only"
-            params["config"]["features"].update(plugins=False, shell_tool=False, image_generation=req.image_generation)
+            params["config"]["features"].update(
+                plugins=False, apps=False, skip_host_skill_discovery=True,
+                shell_tool=False, image_generation=req.image_generation,
+            )
             params["config"]["web_search"] = "disabled"
+            # Without skills the model calls image_generation directly instead of first trying to
+            # read the bundled imagegen SKILL.md through tools this chat does not have.
+            params["config"]["skills"] = {"bundled": {"enabled": False}, "include_instructions": False}
         elif req.mcp_servers:
             params["config"]["mcp_servers"] = {
                 name: {**cfg, "tool_timeout_sec": 600} for name, cfg in req.mcp_servers.items()

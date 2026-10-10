@@ -144,6 +144,24 @@ def test_handoff_copies_images_and_conditions_without_starting_ai(app, delete_so
         assert client.get(f"/api/attachments/{retained_image['id']}/file", headers=AUTH).content == buf.getvalue()
 
 
+def test_design_handoff_attaches_latest_design_sheet(app):
+    state = app.state.roxy
+    conv = conversation(state, mode="design_prompt")
+    sheets = []
+    for color in ("red", "green"):
+        buf = io.BytesIO()
+        Image.new("RGB", (10, 10), color).save(buf, "PNG")
+        sheets.append(buf.getvalue())
+    old, new = (state.attachments.preview_image(data, "image/png") for data in sheets)
+    state.db.add_message(conv["id"], "assistant", "1枚目", tool_calls=[{"name": "image_generation", "images": [old]}])
+    state.db.add_message(conv["id"], "assistant", "修正版", tool_calls=[{"name": "image_generation", "images": [new]}])
+    with TestClient(app) as client:
+        result = client.post(f"/api/conversations/{conv['id']}/handoff", json={"text": "椅子を作ってください"}, headers=AUTH).json()
+    assert result["conversation"]["mode"] == "modeling"
+    assert [a["name"] for a in result["attachments"]] == ["設定画1.png"]
+    assert Path(result["attachments"][0]["path"]).read_bytes() == sheets[1]
+
+
 def test_handoff_missing_image_rolls_back_target(app):
     state = app.state.roxy
     conv = conversation(state)
