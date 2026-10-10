@@ -1,6 +1,7 @@
 // Desktop shell: starts the Python backend, hands its port/token to the UI and
 // makes sure it goes away with the window. The backend binds its own children
 // (AI CLIs, MCP servers) to a Windows job object, so killing it cleans up all.
+// On macOS the backend leads its own process group, which is ended as a whole.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use serde::Serialize;
@@ -31,11 +32,18 @@ struct ShellStatus {
     error: Option<String>,
 }
 
+#[cfg(windows)]
 const LOG_HINT: &str = "ログ: %APPDATA%\\RoxyBlenderAI\\logs\\app.log";
+#[cfg(target_os = "macos")]
+const LOG_HINT: &str = "ログ: ~/Library/Application Support/RoxyBlenderAI/logs/app.log";
+#[cfg(not(any(windows, target_os = "macos")))]
+const LOG_HINT: &str = "ログ: ~/.local/share/RoxyBlenderAI/logs/app.log";
+
+const SIDECAR: &str = if cfg!(windows) { "roxy-ai-backend.exe" } else { "roxy-ai-backend" };
 
 /// Where the backend comes from, in order:
-/// 1. ROXY_BACKEND_PYTHON (a python.exe that has the backend installed)
-/// 2. roxy-ai-backend.exe next to this exe (bundled PyInstaller sidecar)
+/// 1. ROXY_BACKEND_PYTHON (a python that has the backend installed)
+/// 2. roxy-ai-backend(.exe) next to this executable (bundled PyInstaller sidecar)
 /// 3. the development checkout's backend/.venv
 fn backend_command() -> Result<Command, String> {
     let pid = std::process::id().to_string();
@@ -45,7 +53,7 @@ fn backend_command() -> Result<Command, String> {
         return Ok(c);
     }
     if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())) {
-        let sidecar = dir.join("roxy-ai-backend.exe");
+        let sidecar = dir.join(SIDECAR);
         if sidecar.is_file() {
             let mut c = Command::new(sidecar);
             c.args(["--parent-pid", &pid]);
@@ -53,7 +61,11 @@ fn backend_command() -> Result<Command, String> {
         }
     }
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("backend");
-    let py = dev.join(".venv").join("Scripts").join("python.exe");
+    let py = if cfg!(windows) {
+        dev.join(".venv").join("Scripts").join("python.exe")
+    } else {
+        dev.join(".venv").join("bin").join("python")
+    };
     if py.is_file() {
         let mut c = Command::new(py);
         c.current_dir(&dev).args(["-m", "roxy_ai", "--parent-pid", &pid]);
@@ -75,6 +87,11 @@ fn spawn_backend(shared: &Shared) {
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0); // the backend and everything it starts share one group
     }
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -112,6 +129,19 @@ fn spawn_backend(shared: &Shared) {
 fn kill_backend(shared: &Shared) {
     let mut b = shared.lock().unwrap();
     if let Some(mut child) = b.child.take() {
+        #[cfg(unix)]
+        {
+            // Let the backend shut its AI sessions down, then end whatever is left in its group.
+            let pid = child.id().to_string();
+            let _ = Command::new("kill").args(["-TERM", &pid]).status();
+            for _ in 0..30 {
+                if matches!(child.try_wait(), Ok(Some(_))) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            let _ = Command::new("kill").args(["-KILL", "--", &format!("-{pid}")]).status();
+        }
         let _ = child.kill();
         let _ = child.wait();
     }

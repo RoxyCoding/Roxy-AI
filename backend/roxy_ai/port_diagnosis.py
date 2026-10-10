@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 from .procs import run_capture
@@ -40,15 +41,17 @@ def parse_netstat(text: str, port: int) -> list[int]:
 
 
 async def listening_pids(port: int) -> list[int]:
-    if os.name != "nt":
-        return []
+    if os.name != "nt":  # macOS / Linux: lsof prints one PID per line with -t
+        code, out = await run_capture(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"], timeout=10)
+        return sorted({int(x) for x in out.split() if x.isdigit()}) if code == 0 else []
     code, out = await run_capture(["netstat", "-ano", "-p", "TCP"], timeout=10)
     return parse_netstat(out, port) if code == 0 else []
 
 
 async def process_name(pid: int) -> str:
     if os.name != "nt":
-        return ""
+        code, out = await run_capture(["ps", "-p", str(pid), "-o", "comm="], timeout=10)
+        return Path(out.strip()).name if code == 0 else ""
     code, out = await run_capture(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], timeout=10)
     m = re.match(r'^"([^"]+)"', out.strip()) if code == 0 else None
     return m.group(1) if m else ""
@@ -74,10 +77,19 @@ async def roxy_answers(host: str, port: int, token: str | None) -> bool:
         writer.close()
 
 
+def blender_config_root() -> Path:
+    """Blender's per-user config folder; versions (e.g. 4.5) are its subfolders."""
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA", "")) / "Blender Foundation" / "Blender"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Blender"
+    return Path.home() / ".config" / "blender"
+
+
 def other_blender_addons_on_port(port: int, roots: list[Path] | None = None) -> list[str]:
     """Names of non-Roxy Blender add-ons/extensions whose code mentions this port."""
     if roots is None:
-        base = Path(os.environ.get("APPDATA", "")) / "Blender Foundation" / "Blender"
+        base = blender_config_root()
         roots = [p for v in base.glob("*") for p in (v / "extensions", v / "scripts" / "addons")]
     found: list[str] = []
     pattern = re.compile(rf"\b{port}\b")

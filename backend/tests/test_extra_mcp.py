@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 import pytest
 from fastapi import HTTPException
@@ -17,7 +18,8 @@ PAINTER = {**{k: v for k, v in extra_mcp.PRESETS["substance-painter"].items() if
 
 
 def test_server_spec_prefers_venv_exe(tmp_path):
-    exe = tmp_path / ".venv" / "Scripts" / "roxy-painter-mcp.exe"
+    exe = tmp_path.joinpath(*((".venv", "Scripts", "roxy-painter-mcp.exe") if os.name == "nt"
+                              else (".venv", "bin", "roxy-painter-mcp")))
     exe.parent.mkdir(parents=True)
     exe.write_bytes(b"")
     spec = extra_mcp.server_spec({**PAINTER, "server_dir": str(tmp_path)})

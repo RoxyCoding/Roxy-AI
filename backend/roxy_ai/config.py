@@ -6,6 +6,7 @@ import copy
 import json
 import logging
 import os
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,8 @@ def data_dir() -> Path:
         base = Path(override)
     elif os.name == "nt":
         base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / APP_NAME
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support" / APP_NAME
     else:
         base = Path.home() / ".local" / "share" / APP_NAME
     base.mkdir(parents=True, exist_ok=True)

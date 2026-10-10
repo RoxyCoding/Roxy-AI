@@ -44,8 +44,10 @@ Claudeは同じセッションへ追加入力を送ります。添付にも対�
 AIの準備中・中断中や送信に失敗した場合は、入力欄に内容を残します。
 
 サイドバーの「設定画生成」から、3Dモデリング用の設定画の相談・プロンプト作成・画像生成を行えます。新しい設定画チャットはCodexを選択して開きます。
+
+裏面・底面の正投影図、厚みと断面寸法、接合部、装飾の寸法も対象に応じて補足します。情報が多い対象は全体シートと補足シートに分け、寸法線の測定範囲や図どうしの整合性も確認するよう指示します。1枚にまとめたい場合は、その指定を優先します。
 正投影の四面図、寸法、細部の拡大図、接合構造、斜め3方向の補助図、素材、図どうしの整合性を整理します。参考画像の添付と制作条件の編集にも対応します。
-Codexで「この条件で設定画を生成して」と送ると、利用中のアカウント・モデルで画像生成が使える場合に、生成画像をチャット内でプレビュー表示します。
+Codexで「この条件で設定画を生成して」と送ると、利用中のアカウント・モデルで画像生成が使える場合に、生成画像をチャット内でプレビュー表示します。生成に使用したプロンプト全体もコピーできるコードブロックで表示し、画像の修正時にも今回使用したプロンプトを提示します。
 Claude・ローカルLLMでは条件相談とプロンプト作成を利用でき、画像生成はCodexへ切り替えて行います。生成画像のプレビューはバックエンド終了時に消えるため、残したい画像は拡大表示の「ダウンロード」で保存してください。
 
 ### 表示言語
@@ -240,6 +242,25 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Distribution
 SignPath の設定（シークレット `SIGNPATH_API_TOKEN`、変数 `SIGNPATH_ORGANIZATION_ID` / `SIGNPATH_PROJECT_SLUG` /
 `SIGNPATH_SIGNING_POLICY`）が無い間は、未署名のインストーラーを成果物としてアップロードします。
 `v0.1.0` のようなタグを push すると、インストーラー付きのリリース（下書き）を作成します。
+
+### macOS 版
+
+Apple Silicon（M1 以降）の macOS 11 以降に対応しています。
+
+```bash
+./scripts/setup.sh   # backend/.venv と npm パッケージ
+./scripts/dev.sh     # アプリ起動（Tauri + Vite + バックエンド）
+./scripts/build.sh --distribution   # → app/src-tauri/target/release/bundle/dmg/Roxy AI_<版>_aarch64.dmg
+```
+
+- 前提：Xcode Command Line Tools、Node.js 20+、Rust、Python 3.10+、uv（`brew install uv`）、使う AI の CLI
+- データは `~/Library/Application Support/RoxyBlenderAI` に保存します
+- Finder から起動しても、ログインシェル（zsh など）の PATH を読み込むので、Homebrew や npm で入れた `claude` / `codex` / `uv` / `llama-server` を使えます
+- ローカルLLM は `brew install llama.cpp` の `llama-server`（Metal 対応）を使います
+- GitHub Actions（`.github/workflows/release.yml` の macos ジョブ）でも .dmg をビルドします
+- 配布版はアドホック署名で、Apple の公証（有料の Apple Developer 登録が必要）はしていません。初回は
+  .app を右クリック →「開く」、または「システム設定 → プライバシーとセキュリティ」の「このまま開く」で起動を許可してください。
+  「壊れているため開けません」と出る場合は、ターミナルで `xattr -cr "/Applications/Roxy AI.app"` を実行してください
 
 ## コード署名ポリシー
 

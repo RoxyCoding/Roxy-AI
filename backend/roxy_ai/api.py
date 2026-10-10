@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Literal
@@ -633,6 +634,10 @@ def create_app(paths: Paths, token: str, port: int = 0) -> FastAPI:
             raise ValueError("このパスは開けません")
         if os.name == "nt":
             subprocess.Popen(["explorer", "/select,", str(target)] if target.is_file() else ["explorer", str(target)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(target)] if target.is_file() else ["open", str(target)])
+        else:
+            subprocess.Popen(["xdg-open", str(target if target.is_dir() else target.parent)])
         return {"ok": True}
 
     # WebSocket ----------------------------------------------------------------------------------

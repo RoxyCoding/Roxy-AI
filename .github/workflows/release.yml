@@ -1,5 +1,5 @@
-# Builds the Windows installer on a GitHub-hosted runner and, once the project is set up on
-# SignPath Foundation, has it signed there (https://signpath.org).
+# Builds the Windows installer and the macOS app on GitHub-hosted runners. Once the project
+# is set up on SignPath Foundation (https://signpath.org), the Windows installer is signed there.
 #
 # Repository settings needed for signing (Settings -> Secrets and variables -> Actions):
 #   secret   SIGNPATH_API_TOKEN          API token of the SignPath CI user
@@ -20,7 +20,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
     defaults:
       run:
@@ -86,3 +86,48 @@ jobs:
         with:
           draft: true
           files: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' && 'signed/*.exe' || 'app/src-tauri/target/release/bundle/nsis/*.exe' }}
+
+  # macOS (Apple Silicon). Ad-hoc signed: Gatekeeper asks users to allow the app once
+  # (see README). Apple notarization would need a paid Apple Developer account.
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Install dependencies
+        run: ./scripts/setup.sh
+
+      - name: Test backend
+        working-directory: backend
+        run: .venv/bin/python -m pytest -q
+
+      - name: Build app (distribution)
+        run: ./scripts/build.sh --distribution
+
+      - name: Upload dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: roxy-ai-macos
+          path: app/src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: app/src-tauri/target/release/bundle/dmg/*.dmg

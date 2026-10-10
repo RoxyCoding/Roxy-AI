@@ -23,7 +23,7 @@ import uvicorn
 from .api import create_app
 from .config import Paths, data_dir
 from .logs import setup_logging
-from .procs import ensure_hidden_console, install_kill_on_close_job, watch_parent
+from .procs import ensure_hidden_console, ensure_login_path, install_kill_on_close_job, watch_parent
 
 
 def main() -> None:
@@ -37,6 +37,8 @@ def main() -> None:
     paths = Paths(data_dir())
     setup_logging(paths.logs, args.debug)
     log = logging.getLogger("roxy_ai")
+    if ensure_login_path():
+        log.info("Using the login shell PATH (macOS)")
     if install_kill_on_close_job():
         log.info("Child processes are bound to this process (job object)")
     if ensure_hidden_console():

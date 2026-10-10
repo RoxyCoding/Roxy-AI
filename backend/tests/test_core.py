@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 from PIL import Image
@@ -100,7 +101,8 @@ def test_scene_header_parsing():
 
 
 def test_mcp_command_prefers_checkout_venv(tmp_path):
-    exe = tmp_path / ".venv" / "Scripts" / "roxy-blender-mcp.exe"
+    exe = tmp_path.joinpath(*((".venv", "Scripts", "roxy-blender-mcp.exe") if os.name == "nt"
+                              else (".venv", "bin", "roxy-blender-mcp")))
     exe.parent.mkdir(parents=True)
     exe.write_text("")
     s = {"mcp": {"server_dir": str(tmp_path), "command": "", "args": []}}

@@ -29,6 +29,9 @@ function Field({ label, hint, children }: { label: string; hint?: ReactNode; chi
   );
 }
 
+/** Joins with the separator the backend's paths already use (Windows or macOS). */
+const joinPath = (dir: string, name: string) => dir + (dir.includes("\\") ? "\\" : "/") + name;
+
 type BrowseKind = "file" | "folder" | "blend";
 
 function BrowseButton({ kind, value, onSelect }: { kind: BrowseKind; value: string; onSelect: (path: string) => void }) {
@@ -265,7 +268,7 @@ function ProviderCard({ p }: { p: ProviderStatus }) {
               <p className="muted small">
                 {tr("GGUF 形式のモデルファイル（.gguf）をアプリが直接読み込みます。下のモデルフォルダのほか、LM Studio がダウンロード済みのモデルも自動で見つけます。 画像対応（mmproj ファイル付き）のモデルには画像も渡せます。")}</p>
               <div className="row gap-sm wrap">
-                <button className="btn" onClick={() => void actions.guard(() => post("/api/system/reveal", { path: String(conf.models_dir || "") || `${state.boot.data_dir}\\models` }))}>
+                <button className="btn" onClick={() => void actions.guard(() => post("/api/system/reveal", { path: String(conf.models_dir || "") || joinPath(state.boot.data_dir, "models") }))}>
                   <Icon name="folder" size={13} /> {tr("モデルフォルダを開く")}</button>
                 <button className="btn ghost" disabled={busy} onClick={() => void login("unload")} title={tr("GPUメモリを解放します（次の送信で再読み込み）")}>
                   {tr("モデルを解放")}</button>
@@ -273,7 +276,7 @@ function ProviderCard({ p }: { p: ProviderStatus }) {
                   <Icon name="refresh" size={13} /> {tr("モデル一覧を更新")}</button>
               </div>
               <Field label={tr("モデルの保存場所")} hint={tr("指定した場合は、このフォルダと追加のモデルフォルダだけを検索します。空欄なら既定の保存先と LM Studio などを自動検索します。")}>
-                <TextSetting browse="folder" value={String(conf.models_dir ?? "")} placeholder={`${state.boot.data_dir}\\models`}
+                <TextSetting browse="folder" value={String(conf.models_dir ?? "")} placeholder={joinPath(state.boot.data_dir, "models")}
                              onSave={(v) => void save({ models_dir: v.trim() }).then(() => actions.refreshProviders(true))} />
               </Field>
               <ModelDownloads />
@@ -713,7 +716,7 @@ function LogsTab() {
         </div>
         <button className="btn small" onClick={() => void load()}><Icon name="refresh" size={13} /> {tr("更新")}</button>
         <span className="grow" />
-        <button className="btn small" onClick={() => void actions.guard(() => post("/api/system/reveal", { path: `${state.boot.data_dir}\\logs` }))}>
+        <button className="btn small" onClick={() => void actions.guard(() => post("/api/system/reveal", { path: joinPath(state.boot.data_dir, "logs") }))}>
           <Icon name="folder" size={13} /> {tr("フォルダを開く")}</button>
       </div>
       <pre className="log-view">{lines.join("\n") || tr("（ログはまだありません）")}</pre>

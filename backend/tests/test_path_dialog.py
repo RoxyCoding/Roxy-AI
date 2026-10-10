@@ -11,6 +11,7 @@ from roxy_ai import path_dialog
 
 @pytest.mark.parametrize("kind", ["file", "folder", "blend"])
 def test_path_dialog_selection_and_cancel(tmp_path, monkeypatch, kind):
+    monkeypatch.setattr(path_dialog.sys, "platform", "win32")  # the Tk dialog (Windows / Linux)
     root = Mock()
     monkeypatch.setattr(path_dialog.tk, "Tk", lambda: root)
     dialog = Mock(return_value=str(tmp_path / "三面図.blend"))
@@ -32,6 +33,21 @@ def test_path_dialog_selection_and_cancel(tmp_path, monkeypatch, kind):
     with pytest.raises(ValueError, match="直接入力"):
         path_dialog.select_path(kind)
     assert root.destroy.call_count == 3
+
+
+def test_path_dialog_macos_uses_system_dialog(tmp_path, monkeypatch):
+    monkeypatch.setattr(path_dialog.sys, "platform", "darwin")
+    run = Mock(return_value=Mock(returncode=0, stdout=str(tmp_path / "scene.blend") + "\n", stderr=""))
+    monkeypatch.setattr(path_dialog.subprocess, "run", run)
+    assert path_dialog.select_path("blend", str(tmp_path)) == str(tmp_path / "scene.blend")
+    script = run.call_args.args[0][2]
+    assert script.startswith("POSIX path of (choose file") and 'of type {"blend"}' in script
+    assert "default location (POSIX file " in script and tmp_path.name in script
+    run.return_value = Mock(returncode=1, stdout="", stderr="execution error: User canceled. (-128)")
+    assert path_dialog.select_path("folder") is None
+    run.return_value = Mock(returncode=1, stdout="", stderr="no GUI")
+    with pytest.raises(ValueError, match="直接入力"):
+        path_dialog.select_path("folder")
 
 
 def test_browse_api_validates_kind_and_preserves_cancel(tmp_path, monkeypatch):

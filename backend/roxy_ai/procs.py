@@ -21,6 +21,35 @@ logger = logging.getLogger(__name__)
 
 _job_handle = None
 
+# Where installers put CLIs on macOS (Homebrew, uv, npm prefixes, Claude Code's native installer).
+_MAC_PATH_DIRS = ("/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "~/.local/bin", "~/.npm-global/bin",
+                  "~/.bun/bin", "~/.cargo/bin", "~/.claude/local")
+
+
+def ensure_login_path() -> bool:
+    """Give the backend the user's shell PATH on macOS.
+
+    Apps started from Finder / the Dock get a minimal PATH (/usr/bin:/bin:...), so
+    claude, codex, uv and llama-server installed through Homebrew, npm or nvm would
+    not be found. Ask the login shell for its PATH once and append the usual folders.
+    """
+    if sys.platform != "darwin":
+        return False
+    shell = os.environ.get("SHELL") or "/bin/zsh"
+    found: list[str] = []
+    try:
+        out = subprocess.run([shell, "-ilc", 'printf "__ROXY_PATH__%s" "$PATH"'], capture_output=True, text=True,
+                             timeout=10, stdin=subprocess.DEVNULL).stdout
+        if "__ROXY_PATH__" in out:
+            found = out.rsplit("__ROXY_PATH__", 1)[1].strip().split(":")
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.warning("could not read the login shell PATH: %s", e)
+    current = os.environ.get("PATH", "").split(":")
+    extra = [os.path.expanduser(d) for d in _MAC_PATH_DIRS]
+    merged = list(dict.fromkeys(p for p in [*found, *current, *extra] if p))
+    os.environ["PATH"] = ":".join(merged)
+    return True
+
 
 def install_kill_on_close_job() -> bool:
     global _job_handle
