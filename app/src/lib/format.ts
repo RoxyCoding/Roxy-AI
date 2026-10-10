@@ -59,6 +59,6 @@ export function findModel<T extends { id: string; is_default: boolean }>(models:
   return models.find((m) => m.id === model) ?? (!model || model === "default" ? models.find((m) => m.is_default) : undefined);
 }
 export function visibleAssistantText(text: string): string {
-  const cleaned = text.replace(/^```roxy-(?:brief|progress)[ \t]*\r?\n.*?(?:^```[ \t]*(?:\r?\n|$)|$(?![\s\S]))/gms, "");
+  const cleaned = text.replace(/^```roxy-(?:brief|progress|stage)[ \t]*\r?\n.*?(?:^```[ \t]*(?:\r?\n|$)|$(?![\s\S]))/gms, "");
   return cleaned === text ? text : cleaned.trim();
 }

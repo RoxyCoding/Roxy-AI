@@ -6,6 +6,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,11 +37,13 @@ from .logs import op
 from .mcp_monitor import BlenderMonitor, mcp_server_command
 from . import extra_mcp
 from .unreal_monitor import unreal_call_is_read_only
-from .workflow import ModelingBrief, ModelingProgress, REPORTS, visible_text
+from .workflow import DesignStage, ModelingBrief, ModelingProgress, REPORTS, strip_early_modeling, visible_text
 
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_OUTPUT = 20000
+# The answer that approves the concept image in the design chat (see the design system prompt).
+APPROVE_CONCEPT = re.compile(r"設定画に進む|proceed to (?:the )?design sheet", re.I)
 PERSIST_EVERY = 3.0
 
 
@@ -72,6 +75,7 @@ class Run:
     mode: str = "modeling"
     progress: dict | None = None
     report_cursor: int = 0
+    sheet_from: int | None = None  # design chat: text offset after which ```modeling blocks may appear
     text: str = ""
     status_text: str = "準備中…"
     tool_calls: list[dict] = field(default_factory=list)
@@ -223,10 +227,14 @@ class ChatService:
                 "未指定の条件は推奨値を使い、仮定を短く添えてください。\n"
                 "手順2 確認: イメージ画を生成したら、続けて質問ツール（AskUserQuestion / request_user_input）で"
                 "「このイメージで設定画に進めてよいか」を確認してください。選択肢には「これで良い（設定画に進む）」と「修正したい」を含めてください。"
+                "英語で回答する場合は「Looks good (proceed to design sheet)」と「Request changes」にしてください。"
                 "イメージ画を生成した応答には、画像・短い説明・仮定・確認の質問だけを含めてください。"
                 "この段階では設定画を生成せず、画像生成プロンプトやモデリングプロンプトを本文に書かず、"
                 "```textや```modelingのコードブロックも出力しないでください。"
                 "ユーザーの承認を得るまで、手順3・手順4に進まないでください。"
+                "承認されたら、設定画を生成する前に```roxy-stageのJSONブロックで{\"stage\": \"sheet\"}を報告してください。"
+                "ユーザーがイメージ画からやり直すことを求めたら{\"stage\": \"concept\"}を報告してください。"
+                "このブロックは画面の進行状況を更新するためのもので、本文で形式を説明しないでください。"
                 "修正を希望されたら修正点を確認し、承認済みの部分を保ったままイメージ画を再生成して、再度同じ確認をしてください。"
                 "承認されるまでこの確認を繰り返してください。\n"
                 "手順3 設定画: イメージ画が承認されたら、承認されたイメージ画を基準として、デザイン・比率・配色・素材・装飾を変えずに"
@@ -433,6 +441,8 @@ class ChatService:
                                         status="streaming")
         run = Run(new_id(), conversation_id, project["id"], provider, model, user_msg["id"], assistant["id"], lock_key,
                   effort=effort, mode=conv["mode"])
+        if conv["mode"] == "design_prompt" and conv.get("design_stage") == "sheet":
+            run.sheet_from = 0
         self.runs[conversation_id] = run
         for key in lock_key.split("|"):
             self.locks[key] = conversation_id
@@ -553,7 +563,7 @@ class ChatService:
                 if result and result.model:
                     meta["resolved_model"] = result.model
                 msg = self.db.update_message(run.assistant_message_id, {
-                    "content": visible_text(run.text), "status": "complete" if final_status == "completed" else final_status,
+                    "content": self._content(run), "status": "complete" if final_status == "completed" else final_status,
                     "error": error,
                     "tool_calls": run.tool_calls, "meta": meta,
                 })
@@ -613,6 +623,15 @@ class ChatService:
             await self._notice(run, n)
         language = "English" if settings["ui"].get("language") == "en" else "Japanese"
         parts: list[InputPart] = [InputPart("text", text=f"The user selected {language} for replies. Respond in {language} unless explicitly asked otherwise.")]
+        if run.mode == "design_prompt":
+            if run.sheet_from is None:
+                stage_hint = ("現在の段階: イメージ画の作成・確認中（手順1〜2）。イメージ画が承認されるまで、設定画を生成せず、"
+                              "```modelingのモデリングプロンプトも出力しないでください。"
+                              "このメッセージがイメージ画の承認であれば、まず```roxy-stageで{\"stage\": \"sheet\"}を報告してから手順3に進んでください。")
+            else:
+                stage_hint = ("現在の段階: イメージ画は承認済み（手順3〜4）。承認済みのイメージ画を基準に設定画を生成・修正し、"
+                              "その後に```modelingのモデリングプロンプトを提示してください。")
+            parts.append(InputPart("text", text=stage_hint))
         if run.mode == "design_prompt" and run.provider != "codex":
             parts.append(InputPart("text", text="現在選択中のAIでは、このチャットで画像生成ツールを利用できません。条件相談とプロンプト作成には対応し、画像生成を依頼された場合はCodexへの切り替えを案内してください。"))
         if handoff:
@@ -666,8 +685,22 @@ class ChatService:
             meta = {"progress": run.progress}
             if run.mode in ("prompt", "design_prompt"):
                 meta["brief"] = self.db.get_conversation(run.conversation_id)["brief"]
-            self.db.update_message(run.assistant_message_id, {"content": visible_text(run.text), "tool_calls": run.tool_calls,
+            self.db.update_message(run.assistant_message_id, {"content": self._content(run), "tool_calls": run.tool_calls,
                                                             "meta": meta})
+
+    @staticmethod
+    def _content(run: Run) -> str:
+        text = strip_early_modeling(run.text, run.sheet_from) if run.mode == "design_prompt" else run.text
+        return visible_text(text)
+
+    async def _set_design_stage(self, run: Run, stage: str, at: int) -> None:
+        if stage == "sheet":
+            run.sheet_from = at if run.sheet_from is None else run.sheet_from
+        else:
+            run.sheet_from = None
+        conv = self.db.update_conversation(run.conversation_id, {"design_stage": "sheet" if stage == "sheet" else ""})
+        if conv:
+            await self.publish({"type": "conversation.updated", "conversation": conv})
 
     async def _update_reports(self, run: Run) -> None:
         for match in REPORTS.finditer(run.text, run.report_cursor):
@@ -679,6 +712,8 @@ class ChatService:
                     if patch and conv:
                         conv = self.db.update_conversation(run.conversation_id, {"brief": {**conv["brief"], **patch}})
                         await self.publish({"type": "conversation.updated", "conversation": conv})
+                elif match[1] == "stage" and run.mode == "design_prompt":
+                    await self._set_design_stage(run, DesignStage.model_validate_json(match[2]).stage, match.start())
                 elif match[1] == "progress" and run.mode == "modeling":
                     run.progress = ModelingProgress.model_validate_json(match[2]).model_dump()
                     await self.publish({"type": "run.progress", "conversation_id": run.conversation_id, "progress": run.progress})
@@ -827,6 +862,9 @@ class ChatService:
             run.approvals.pop(aid, None)
             run.status_text = prev_status
             await self.publish({"type": "approval.resolved", "id": aid, "conversation_id": run.conversation_id})
+        if run.mode == "design_prompt" and req.kind == "question" and any(
+                APPROVE_CONCEPT.search(label) for labels in decision.answers.values() for label in labels):
+            await self._set_design_stage(run, "sheet", len(run.text))
         if decision.allow and decision.remember and req.allow_session:
             allowed.add(key)
         op("approval.decision", conversation=run.conversation_id, kind=req.kind, title=req.title,

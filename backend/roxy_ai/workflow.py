@@ -26,8 +26,24 @@ class ModelingProgress(BaseModel):
     detail: str = Field(default="", max_length=300)
 
 
-REPORTS = re.compile(r"^```roxy-(brief|progress)[ \t]*\r?\n(.*?)^```[ \t]*(?:\r?\n|$)", re.M | re.S)
-HIDDEN_REPORTS = re.compile(r"^```roxy-(?:brief|progress)[ \t]*\r?\n.*?(?:^```[ \t]*(?:\r?\n|$)|\Z)", re.M | re.S)
+REPORTS = re.compile(r"^```roxy-(brief|progress|stage)[ \t]*\r?\n(.*?)^```[ \t]*(?:\r?\n|$)", re.M | re.S)
+HIDDEN_REPORTS = re.compile(r"^```roxy-(?:brief|progress|stage)[ \t]*\r?\n.*?(?:^```[ \t]*(?:\r?\n|$)|\Z)", re.M | re.S)
+
+
+class DesignStage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    stage: Literal["concept", "sheet"]
+
+
+# Blender prompts in the design chat; only allowed once the concept image is approved.
+MODELING_BLOCKS = re.compile(r"^```modeling[ \t]*\r?\n.*?(?:^```[ \t]*(?:\r?\n|$)|\Z)", re.M | re.S)
+
+
+def strip_early_modeling(text: str, allowed_from: int | None) -> str:
+    """Drop ```modeling blocks that start before the concept image was approved."""
+    def keep(m: re.Match) -> str:
+        return m[0] if allowed_from is not None and m.start() >= allowed_from else ""
+    return MODELING_BLOCKS.sub(keep, text)
 
 
 def visible_text(text: str) -> str:

@@ -14,6 +14,8 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
     || (state.draftMode === "design_prompt" && lang === "modeling");
   const designPrompt = state.draftMode === "design_prompt" && ["", "text", "markdown"].includes(lang);
   const running = state.currentId ? Boolean(state.runs[state.currentId]) : false;
+  // The backend drops modeling prompts written before the concept image was approved; hide them while streaming too.
+  if (state.draftMode === "design_prompt" && lang === "modeling" && state.detail?.conversation.design_stage !== "sheet") return null;
   return (
     <div className="codeblock">
       <div className="codeblock-head">

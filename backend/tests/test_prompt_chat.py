@@ -88,6 +88,7 @@ def test_prompt_chat_roundtrip_and_request_isolation(tmp_path, monkeypatch, mode
             assert "この段階では設定画を生成せず、画像生成プロンプトやモデリングプロンプトを本文に書かず" in request.system_append
             assert "```textや```modelingのコードブロックも出力しない" in request.system_append
             assert "ユーザーの承認を得るまで、手順3・手順4に進まない" in request.system_append
+            assert "roxy-stage" in request.system_append and "設定画に進む" in request.system_append
             assert "イメージ画の段階では、ユーザーから求められない限りプロンプトを提示しない" in request.system_append
             assert "承認されたイメージ画を基準" in request.system_append
             assert "ネイティブのimage_generationを直接使用" in request.system_append
@@ -172,3 +173,78 @@ def test_design_chat_guides_providers_without_native_image_generation(tmp_path, 
         req = adapter.requests[0]
         assert req.prompt_only and not req.image_generation and req.mcp_servers == {}
         assert any("画像生成ツールを利用できません" in part.text and "Codexへの切り替え" in part.text for part in req.parts)
+
+
+def test_design_chat_holds_modeling_prompt_until_concept_is_approved(tmp_path):
+    concept = "イメージ画です。\n```modeling\n早すぎるプロンプト\n```\n"
+    sheet = "```roxy-stage\n{\"stage\": \"sheet\"}\n```\n設定画です。\n```modeling\n設定画どおりに作る\n```"
+
+    class StagedAdapter(PromptAdapter):
+        async def run(self, req, emit, approve):
+            self.requests.append(req)
+            await emit(TextDelta(concept if len(self.requests) == 1 else sheet))
+            return RunResult("design-session", "completed")
+
+    (tmp_path / "settings.json").write_text(json.dumps({"mcp": {"monitor_enabled": False}}), encoding="utf-8")
+    app = create_app(Paths(tmp_path), "t")
+    state = app.state.roxy
+    adapter = StagedAdapter()
+    state.adapters["codex"] = adapter
+    headers = {"Authorization": "Bearer t"}
+    with TestClient(app) as client:
+        conv = client.post("/api/conversations", json={"project_id": state.active_project()["id"], "provider": "codex", "mode": "design_prompt"}, headers=headers).json()
+        assert conv["design_stage"] == ""
+        assert client.post(f"/api/conversations/{conv['id']}/messages", json={"provider": "codex", "text": "椅子のイメージ画を生成して"}, headers=headers).status_code == 200
+        detail = client.get(f"/api/conversations/{conv['id']}", headers=headers).json()
+        assert "早すぎるプロンプト" not in detail["messages"][-1]["content"] and "イメージ画です" in detail["messages"][-1]["content"]
+        assert detail["conversation"]["design_stage"] == ""
+        assert "イメージ画の作成・確認中" in adapter.requests[0].parts[1].text
+        assert client.post(f"/api/conversations/{conv['id']}/messages", json={"provider": "codex", "text": "これで良いです"}, headers=headers).status_code == 200
+        detail = client.get(f"/api/conversations/{conv['id']}", headers=headers).json()
+        content = detail["messages"][-1]["content"]
+        assert "設定画どおりに作る" in content and "roxy-stage" not in content
+        assert detail["conversation"]["design_stage"] == "sheet"
+        assert client.post(f"/api/conversations/{conv['id']}/messages", json={"provider": "codex", "text": "色を変えて"}, headers=headers).status_code == 200
+        assert "承認済み" in adapter.requests[2].parts[1].text
+
+
+def test_design_chat_question_approval_unlocks_modeling_prompt(tmp_path):
+    class ApprovingAdapter(PromptAdapter):
+        async def run(self, req, emit, approve):
+            await emit(TextDelta("イメージ画です。\n```modeling\n承認前\n```\n"))
+            await approve(ApprovalRequest("question", "AIからの質問", questions=[{"id": "ok", "question": "進めますか？", "options": []}], allow_session=False))
+            await emit(TextDelta("```modeling\n承認後\n```"))
+            return RunResult("design-session", "completed")
+
+    (tmp_path / "settings.json").write_text(json.dumps({"mcp": {"monitor_enabled": False}}), encoding="utf-8")
+    app = create_app(Paths(tmp_path), "t")
+    state = app.state.roxy
+    state.adapters["codex"] = ApprovingAdapter()
+    headers = {"Authorization": "Bearer t"}
+    with TestClient(app) as client, client.websocket_connect("/ws?t=t") as ws:
+        assert ws.receive_json()["type"] == "hello"
+        conv = client.post("/api/conversations", json={"project_id": state.active_project()["id"], "provider": "codex", "mode": "design_prompt"}, headers=headers).json()
+        assert client.post(f"/api/conversations/{conv['id']}/messages", json={"provider": "codex", "text": "生成して"}, headers=headers).status_code == 200
+        while (event := ws.receive_json())["type"] != "approval.request":
+            pass
+        assert client.post(f"/api/approvals/{event['approval']['id']}", json={"allow": True, "answers": {"ok": ["これで良い（設定画に進む）"]}}, headers=headers).status_code == 200
+        while ws.receive_json()["type"] != "run.finished":
+            pass
+        detail = client.get(f"/api/conversations/{conv['id']}", headers=headers).json()
+        assert "承認前" not in detail["messages"][-1]["content"] and "承認後" in detail["messages"][-1]["content"]
+        assert detail["conversation"]["design_stage"] == "sheet"
+
+
+def test_existing_design_chats_keep_modeling_prompts_after_migration(tmp_path):
+    path = tmp_path / "old.db"
+    db = Database(path)
+    project = db.create_project("P")
+    design = db.create_conversation(project["id"], "codex", mode="design_prompt")
+    normal = db.create_conversation(project["id"], "codex")
+    db.close()
+    with sqlite3.connect(path) as connection:
+        connection.execute("ALTER TABLE conversations DROP COLUMN design_stage")
+    db = Database(path)
+    assert db.get_conversation(design["id"])["design_stage"] == "sheet"
+    assert db.get_conversation(normal["id"])["design_stage"] == ""
+    db.close()

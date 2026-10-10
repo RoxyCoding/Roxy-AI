@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     mode TEXT NOT NULL DEFAULT 'modeling',
     brief TEXT NOT NULL DEFAULT '{}',
     draft TEXT NOT NULL DEFAULT '{}',
+    design_stage TEXT NOT NULL DEFAULT '',
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
 );
@@ -129,6 +130,10 @@ class Database:
             self._conn.execute("ALTER TABLE conversations ADD COLUMN brief TEXT NOT NULL DEFAULT '{}'")
         if "draft" not in cols:
             self._conn.execute("ALTER TABLE conversations ADD COLUMN draft TEXT NOT NULL DEFAULT '{}'")
+        if "design_stage" not in cols:
+            self._conn.execute("ALTER TABLE conversations ADD COLUMN design_stage TEXT NOT NULL DEFAULT ''")
+            # Design chats from before the staged flow keep showing their modeling prompts.
+            self._conn.execute("UPDATE conversations SET design_stage='sheet' WHERE mode='design_prompt'")
 
     def close(self) -> None:
         with self._lock:
@@ -215,7 +220,7 @@ class Database:
         return self._all("SELECT * FROM conversations ORDER BY updated_at DESC")
 
     def update_conversation(self, cid: str, fields: dict) -> dict | None:
-        allowed = {"title", "provider", "model", "effort", "project_id", "brief", "draft"}
+        allowed = {"title", "provider", "model", "effort", "project_id", "brief", "draft", "design_stage"}
         sets = {k: json.dumps(v, ensure_ascii=False) if k in {"brief", "draft"} else v for k, v in fields.items() if k in allowed}
         if sets:
             cols = ", ".join(f"{k}=:{k}" for k in sets)

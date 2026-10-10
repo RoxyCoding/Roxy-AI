@@ -36,6 +36,7 @@ export interface Conversation {
   effort: string; // thinking level, "" = model default
   mode: "modeling" | "prompt" | "design_prompt";
   brief: ModelingBrief;
+  design_stage?: "" | "sheet"; // design chat: "sheet" once the concept image is approved
   draft?: { text?: string; attachment_ids?: string[] };
   created_at: number;
   updated_at: number;
